@@ -47,7 +47,12 @@ final class EvaluatePromptHandler
             return;
         }
 
-        $maxRetries = 2;
+        // Max attempts per (prompt, metric, model, run) item. A stalled HTTP call
+        // (the gateway can park a stream/in-flight request without sending any
+        // data or error) is aborted after EVAL_TIMEOUT seconds and re-dispatched
+        // via attempt+1; the final failed attempt is recorded as a benchmark
+        // error so the run can still complete.
+        $maxRetries = $this->envInt('EVAL_MAX_RETRIES', 5);
 
         try {
             // Check if a result already exists for this prompt/metric/model/benchmark/runIndex combination
@@ -85,7 +90,10 @@ final class EvaluatePromptHandler
             // Call Python evaluation service
             $response = $this->httpClient->request('POST', 'http://judge_eval:5000/', [
                 'json' => $evaluationData,
-                'timeout' => 1200 // 20 minutes timeout for evaluation (allow deep reasoning)
+                // Symfony's "timeout" is an idle timeout. The eval service (FastAPI)
+                // sends no bytes until the evaluation is done, so it acts as a total
+                // wall-clock deadline per attempt.
+                'timeout' => $this->envInt('EVAL_TIMEOUT', 300)
             ]);
 
             $result = $response->toArray();
@@ -296,5 +304,19 @@ final class EvaluatePromptHandler
         // Replace {context} placeholder with the actual prompt context
         $context = $prompt->getContext() ?? '';
         return str_replace('{context}', $context, $systemPromptTemplate);
+    }
+
+    /**
+     * Read an integer from the process environment (docker env_file / symfony
+     * runtime), falling back to the given default when unset or blank.
+     */
+    private function envInt(string $key, int $default): int
+    {
+        $raw = getenv($key);
+        if ($raw === false || trim($raw) === '') {
+            return $default;
+        }
+
+        return (int) trim($raw);
     }
 }
