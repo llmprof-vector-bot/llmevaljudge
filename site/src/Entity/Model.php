@@ -38,6 +38,28 @@ class Model
     #[Groups(['settings', 'api'])]
     private ?float $reasonPrice = null;
 
+    /**
+     * Optional OpenAI-style reasoning_effort for this model (e.g. low|medium|high,
+     * provider-dependent). NULL = parameter is not sent in requests.
+     */
+    #[ORM\Column(length: 16, nullable: true)]
+    #[Groups(['settings', 'api'])]
+    private ?string $reasoningEffort = null;
+
+    public function getReasoningEffort(): ?string
+    {
+        return $this->reasoningEffort;
+    }
+
+    public function setReasoningEffort(?string $reasoningEffort): static
+    {
+        // Normalize: empty string means "not configured" — treat as NULL so the
+        // parameter stays out of requests entirely.
+        $this->reasoningEffort = ($reasoningEffort === '' ? null : $reasoningEffort);
+
+        return $this;
+    }
+
     #[ORM\Column(length: 255)]
     #[Groups(['settings', 'api', 'metrics', 'results', 'benchmarks'])]
     private ?string $name = null;

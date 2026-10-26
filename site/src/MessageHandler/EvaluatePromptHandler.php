@@ -70,7 +70,8 @@ final class EvaluatePromptHandler
                 'model' => [
                     'name' => $model->getName(),
                     'url' => $model->getProvider()->getApiUrl(),
-                    'key' => $model->getProvider()->getApiKey()
+                    'key' => $model->getProvider()->getApiKey(),
+                    'reasoning_effort' => $model->getReasoningEffort()
                 ],
                 'metric' => [
                     'name' => $metric->getName(),
@@ -80,7 +81,8 @@ final class EvaluatePromptHandler
                     'model' => [
                         'name' => $metric->getRatingModel()->getName(),
                         'url' => $metric->getRatingModel()->getProvider()->getApiUrl(),
-                        'key' => $metric->getRatingModel()->getProvider()->getApiKey()
+                        'key' => $metric->getRatingModel()->getProvider()->getApiKey(),
+                        'reasoning_effort' => $metric->getRatingModel()->getReasoningEffort()
                     ]
                 ],
                 'system_prompt' => $this->getSystemPrompt($prompt),

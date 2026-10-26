@@ -3,16 +3,19 @@ import requests
 from eval_logger import eval_logger
 
 class Judge(DeepEvalBaseLLM):
-    def __init__(self, api_base: str, api_key: str, model_name: str, logger=None):
+    def __init__(self, api_base: str, api_key: str, model_name: str, logger=None, reasoning_effort=None):
         self.api_base = api_base
         self.api_key = api_key
         self.model_name = model_name
+        # Optional OpenAI-style reasoning_effort; omitted from requests when None.
+        self.reasoning_effort = reasoning_effort
         self.eval_logger = logger if logger is not None else eval_logger
 
         self.eval_logger.info("judge", "Initialized judge", {
             "api_base": api_base,
             "model_name": model_name,
-            "has_api_key": bool(api_key)
+            "has_api_key": bool(api_key),
+            "reasoning_effort": reasoning_effort
         })
 
     def get_model_name(self):
@@ -29,6 +32,8 @@ class Judge(DeepEvalBaseLLM):
             "model": self.model_name,
             "messages": [{"role": "user", "content": prompt}]
         }
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
         headers = {"Authorization": f"Bearer {self.api_key}"}
         
         self.eval_logger.log_llm_request("judge", 
@@ -36,7 +41,8 @@ class Judge(DeepEvalBaseLLM):
                                    model_info={
                                        "name": self.model_name,
                                        "api_base": self.api_base,
-                                       "endpoint": f"{self.api_base}/chat/completions"
+                                       "endpoint": f"{self.api_base}/chat/completions",
+                                       "reasoning_effort": self.reasoning_effort
                                    })
         
         self.eval_logger.decision("judge", "Making evaluation request to judge model", {

@@ -36,7 +36,8 @@ class LlmRequestor:
             "prompt_input": self.prompt.input,
             "model_name": self.model.name,
             "model_url": self.model.url,
-            "system_prompt": self.system_prompt
+            "system_prompt": self.system_prompt,
+            "reasoning_effort": self.model.reasoning_effort
         }
         cache_string = json.dumps(cache_data, sort_keys=True)
         return hashlib.md5(cache_string.encode()).hexdigest()
@@ -158,13 +159,20 @@ class LlmRequestor:
                                            model_info={
                                                "name": self.model.name,
                                                "url": self.model.url,
-                                               "total_messages": len(messages)
+                                               "total_messages": len(messages),
+                                               "reasoning_effort": self.model.reasoning_effort
                                            })
 
                 self.eval_logger.info("llm_requestor", "Making API request to model")
+                # OpenAI-style reasoning effort: injected only when the model row
+                # carries one (extra_body merges top-level into the JSON request).
+                extra_body = {}
+                if self.model.reasoning_effort:
+                    extra_body["reasoning_effort"] = self.model.reasoning_effort
                 completion = client.chat.completions.create(
                     model=self.model.name,
-                    messages=messages
+                    messages=messages,
+                    extra_body=extra_body
                 )
                 
                 response_content = completion.choices[0].message.content

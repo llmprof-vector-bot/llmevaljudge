@@ -159,6 +159,14 @@
                 helpText="Cost per API request"
             />
 
+            <InputText
+                v-model="modelData.reasoningEffort"
+                label="Reasoning Effort"
+                placeholder="Empty = provider default (not sent)"
+                :maxLength="16"
+                helpText="Optional reasoning_effort sent as-is with requests for this model. Value and vocabulary are provider/model-specific (low/medium/high, none, or exotic levels like xhigh — and some endpoints reject unsupported values while others silently ignore them). Leave empty unless the value is verified against the endpoint."
+            />
+
             <InputNumber
                 v-model="modelData.reasonPrice"
                 label="Reasoning Price"
@@ -237,6 +245,7 @@ export default {
                 outputPrice: null,
                 reasonPrice: null,
                 requestPrice: null,
+                reasoningEffort: null,
             },
         };
     },
@@ -266,6 +275,7 @@ export default {
                 outputPrice: null,
                 reasonPrice: null,
                 requestPrice: null,
+                reasoningEffort: null,
             };
             this.isEditMode = false;
             this.editingModelId = null;
@@ -285,6 +295,7 @@ export default {
                 outputPrice: model.outputPrice,
                 reasonPrice: model.reasonPrice,
                 requestPrice: model.requestPrice,
+                reasoningEffort: model.reasoningEffort ?? null,
             };
             this.modalVisible = true;
         },

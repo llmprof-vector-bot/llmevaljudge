@@ -61,7 +61,8 @@ class MetricCreator:
             api_base=self.metric.model.url,
             api_key=self.metric.model.key,
             model_name=self.metric.model.name,
-            logger=self.eval_logger
+            logger=self.eval_logger,
+            reasoning_effort=self.metric.model.reasoning_effort
         )
         self.eval_logger.info("metric_creator", "Created custom judge model", {
             "judge_model_name": self.metric.model.name,
@@ -230,6 +231,7 @@ class MetricCreator:
                     threshold=getattr(self.metric, 'threshold', 0.5),
                     system_prompt=getattr(self, 'system_prompt', '') or "",
                     logger=self.eval_logger,
+                    evaluatee_reasoning_effort=self.evaluatee.reasoning_effort,
                 )
                 return tooluse_metric
 

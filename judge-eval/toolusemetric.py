@@ -41,11 +41,13 @@ class OpenAIClientStreaming:
     non-streaming completions for gpt-oss-120b.
     """
 
-    def __init__(self, base_url: str, api_key: str, logger=None):
+    def __init__(self, base_url: str, api_key: str, logger=None, reasoning_effort=None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         # Per-evaluation logger (falls back to the module singleton for dev tests)
         self.eval_logger = logger if logger is not None else eval_logger
+        # Optional OpenAI-style reasoning_effort for the model this client calls.
+        self.reasoning_effort = reasoning_effort
 
     def chat(self, model: str, messages: list, tools: Optional[list] = None,
              response_format: Optional[dict] = None) -> dict:
@@ -62,6 +64,9 @@ class OpenAIClientStreaming:
             payload["tools"] = tools
         if response_format:
             payload["response_format"] = response_format
+
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
 
         self.eval_logger.log_llm_request("tool_use_metric",
             prompt=json.dumps(messages, ensure_ascii=False)[:2000],
@@ -150,6 +155,7 @@ class ToolUseMetric(BaseMetric):
         threshold: float = 0.5,
         system_prompt: str = "",
         logger=None,
+        evaluatee_reasoning_effort=None,
     ):
         self.model = model
         self.threshold = threshold
@@ -158,14 +164,17 @@ class ToolUseMetric(BaseMetric):
         self.eval_logger = logger if logger is not None else eval_logger
 
         # Model under evaluation
-        self.evaluatee = OpenAIClientStreaming(evaluatee_url, evaluatee_key, logger=self.eval_logger)
+        self.evaluatee = OpenAIClientStreaming(evaluatee_url, evaluatee_key, logger=self.eval_logger,
+                                               reasoning_effort=evaluatee_reasoning_effort)
         self.evaluatee_name = evaluatee_name
 
         # Simulation and final evaluation are separate judge tasks (separate prompts).
         # Both go through the same judge API but use independent client instances.
         self._judge_api = self._extract_judge_api_info(model)
-        self.simulation_client = OpenAIClientStreaming(self._judge_api["url"], self._judge_api["key"], logger=self.eval_logger)
-        self.evaluation_client = OpenAIClientStreaming(self._judge_api["url"], self._judge_api["key"], logger=self.eval_logger)
+        self.simulation_client = OpenAIClientStreaming(self._judge_api["url"], self._judge_api["key"], logger=self.eval_logger,
+                                                       reasoning_effort=self._judge_api.get("reasoning_effort"))
+        self.evaluation_client = OpenAIClientStreaming(self._judge_api["url"], self._judge_api["key"], logger=self.eval_logger,
+                                                       reasoning_effort=self._judge_api.get("reasoning_effort"))
 
         # Definition
         self.tools = definition.get("tools", [])
@@ -194,6 +203,7 @@ class ToolUseMetric(BaseMetric):
             "url": judge_model.api_base,
             "key": judge_model.api_key,
             "name": judge_model.model_name,
+            "reasoning_effort": getattr(judge_model, "reasoning_effort", None),
         }
 
     # ------------------------------------------------------------------ #

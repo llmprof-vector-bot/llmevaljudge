@@ -11,6 +11,7 @@ class ModelInfo(BaseModel):
     name: str
     url: str
     key: str
+    reasoning_effort: Optional[str] = None
 
 class Metric(BaseModel):
     type: str
