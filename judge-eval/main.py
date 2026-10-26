@@ -19,6 +19,9 @@ async def shutdown_event():
 @app.post("/")
 def requestEval(eval_request: EvalRequest):
     try:
+        # Bound the global (request-independent) logger; per-evaluation log
+        # isolation is handled by the fresh EvalLogger created inside Evaluator.
+        eval_logger.reset()
         eval_logger.info("main", "Received evaluation request", {
             "prompt_input_length": len(eval_request.prompt.input) if eval_request.prompt.input else 0,
             "metric_name": eval_request.metric.name,

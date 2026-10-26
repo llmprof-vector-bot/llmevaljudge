@@ -3,12 +3,13 @@ import requests
 from eval_logger import eval_logger
 
 class Judge(DeepEvalBaseLLM):
-    def __init__(self, api_base: str, api_key: str, model_name: str):
+    def __init__(self, api_base: str, api_key: str, model_name: str, logger=None):
         self.api_base = api_base
         self.api_key = api_key
         self.model_name = model_name
-        
-        eval_logger.info("judge", "Initialized judge", {
+        self.eval_logger = logger if logger is not None else eval_logger
+
+        self.eval_logger.info("judge", "Initialized judge", {
             "api_base": api_base,
             "model_name": model_name,
             "has_api_key": bool(api_key)
@@ -22,7 +23,7 @@ class Judge(DeepEvalBaseLLM):
         return None
 
     def generate(self, prompt: str) -> str:
-        eval_logger.info("judge", "Starting judge evaluation")
+        self.eval_logger.info("judge", "Starting judge evaluation")
         
         payload = {
             "model": self.model_name,
@@ -30,7 +31,7 @@ class Judge(DeepEvalBaseLLM):
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
         
-        eval_logger.log_llm_request("judge", 
+        self.eval_logger.log_llm_request("judge", 
                                    prompt=prompt,
                                    model_info={
                                        "name": self.model_name,
@@ -38,7 +39,7 @@ class Judge(DeepEvalBaseLLM):
                                        "endpoint": f"{self.api_base}/chat/completions"
                                    })
         
-        eval_logger.decision("judge", "Making evaluation request to judge model", {
+        self.eval_logger.decision("judge", "Making evaluation request to judge model", {
             "evaluation_prompt": prompt,
             "model": self.model_name,
             "endpoint": f"{self.api_base}/chat/completions"
@@ -51,7 +52,7 @@ class Judge(DeepEvalBaseLLM):
             response_data = resp.json()
             response_content = response_data["choices"][0]["message"]["content"]
             
-            eval_logger.log_llm_response("judge", 
+            self.eval_logger.log_llm_response("judge", 
                                         response=response_content,
                                         metadata={
                                             "response_length": len(response_content),
@@ -59,7 +60,7 @@ class Judge(DeepEvalBaseLLM):
                                             "finish_reason": response_data["choices"][0].get("finish_reason")
                                         })
             
-            eval_logger.decision("judge", "Judge evaluation completed successfully", {
+            self.eval_logger.decision("judge", "Judge evaluation completed successfully", {
                 "response_length": len(response_content),
                 "status_code": resp.status_code
             })
@@ -67,13 +68,13 @@ class Judge(DeepEvalBaseLLM):
             return response_content
             
         except requests.exceptions.RequestException as e:
-            eval_logger.decision("judge", "Judge evaluation failed", {
+            self.eval_logger.decision("judge", "Judge evaluation failed", {
                 "error": str(e),
                 "error_type": type(e).__name__
             })
             raise
 
     async def a_generate(self, prompt: str) -> str:
-        eval_logger.info("judge", "Starting async judge evaluation")
+        self.eval_logger.info("judge", "Starting async judge evaluation")
         # For now, use the sync version - could be enhanced later for true async
         return self.generate(prompt)

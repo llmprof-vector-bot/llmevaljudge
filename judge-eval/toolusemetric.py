@@ -41,9 +41,11 @@ class OpenAIClientStreaming:
     non-streaming completions for gpt-oss-120b.
     """
 
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(self, base_url: str, api_key: str, logger=None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        # Per-evaluation logger (falls back to the module singleton for dev tests)
+        self.eval_logger = logger if logger is not None else eval_logger
 
     def chat(self, model: str, messages: list, tools: Optional[list] = None,
              response_format: Optional[dict] = None) -> dict:
@@ -61,7 +63,7 @@ class OpenAIClientStreaming:
         if response_format:
             payload["response_format"] = response_format
 
-        eval_logger.log_llm_request("tool_use_metric",
+        self.eval_logger.log_llm_request("tool_use_metric",
             prompt=json.dumps(messages, ensure_ascii=False)[:2000],
             model_info={"name": model, "url": self.base_url, "streaming": True})
 
@@ -117,7 +119,7 @@ class OpenAIClientStreaming:
             "content": "".join(content_parts),
             "tool_calls": tool_calls,
         }
-        eval_logger.log_llm_response("tool_use_metric",
+        self.eval_logger.log_llm_response("tool_use_metric",
             response=result["content"][:1000] or json.dumps(
                 [{"name": t["name"], "args": t["arguments"][:200]} for t in tool_calls],
                 ensure_ascii=False),
@@ -147,19 +149,23 @@ class ToolUseMetric(BaseMetric):
         definition: dict,
         threshold: float = 0.5,
         system_prompt: str = "",
+        logger=None,
     ):
         self.model = model
         self.threshold = threshold
 
+        # Per-evaluation logger
+        self.eval_logger = logger if logger is not None else eval_logger
+
         # Model under evaluation
-        self.evaluatee = OpenAIClientStreaming(evaluatee_url, evaluatee_key)
+        self.evaluatee = OpenAIClientStreaming(evaluatee_url, evaluatee_key, logger=self.eval_logger)
         self.evaluatee_name = evaluatee_name
 
         # Simulation and final evaluation are separate judge tasks (separate prompts).
         # Both go through the same judge API but use independent client instances.
         self._judge_api = self._extract_judge_api_info(model)
-        self.simulation_client = OpenAIClientStreaming(self._judge_api["url"], self._judge_api["key"])
-        self.evaluation_client = OpenAIClientStreaming(self._judge_api["url"], self._judge_api["key"])
+        self.simulation_client = OpenAIClientStreaming(self._judge_api["url"], self._judge_api["key"], logger=self.eval_logger)
+        self.evaluation_client = OpenAIClientStreaming(self._judge_api["url"], self._judge_api["key"], logger=self.eval_logger)
 
         # Definition
         self.tools = definition.get("tools", [])
@@ -174,7 +180,7 @@ class ToolUseMetric(BaseMetric):
         self.end_reason: str = ""
         self.evaluation_notes: str = ""
 
-        eval_logger.info("tool_use_metric", "Initialized ToolUseMetric", {
+        self.eval_logger.info("tool_use_metric", "Initialized ToolUseMetric", {
             "evaluatee": evaluatee_name,
             "tools": [t.get("name") for t in self.tools],
             "max_tool_rounds": self.max_tool_rounds,
@@ -450,7 +456,7 @@ class ToolUseMetric(BaseMetric):
     # ------------------------------------------------------------------ #
 
     def measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
-        eval_logger.info("tool_use_metric", "Starting tool-use evaluation", {
+        self.eval_logger.info("tool_use_metric", "Starting tool-use evaluation", {
             "input": (test_case.input or "")[:200],
             "expected_output": bool(getattr(test_case, "expected_output", None)),
         })
@@ -474,12 +480,12 @@ class ToolUseMetric(BaseMetric):
                 round_no += 1
                 if round_no > self.max_tool_rounds:
                     self.end_reason = ROUND_END_MAX_ROUNDS
-                    eval_logger.decision("tool_use_metric",
+                    self.eval_logger.decision("tool_use_metric",
                         f"Max rounds reached ({self.max_tool_rounds}); ending tool interaction",
                         {"rounds_used": round_no - 1})
                     break
 
-                eval_logger.info("tool_use_metric", f"Round {round_no}: requesting model response",
+                self.eval_logger.info("tool_use_metric", f"Round {round_no}: requesting model response",
                                  {"max_rounds": self.max_tool_rounds})
 
                 resp = self.evaluatee.chat(self.evaluatee_name, conversation, tools=tools_openai)
@@ -491,13 +497,13 @@ class ToolUseMetric(BaseMetric):
                     self.final_answer = resp["content"]
                     self.end_reason = ROUND_END_FINAL_ANSWER
                     conversation.append({"role": "assistant", "content": resp["content"]})
-                    eval_logger.decision("tool_use_metric",
+                    self.eval_logger.decision("tool_use_metric",
                         "Model emitted no tool calls; final answer given",
                         {"round": round_no, "answer_length": len(self.final_answer)})
                     break
 
                 if finish != "tool_calls":
-                    eval_logger.info("tool_use_metric",
+                    self.eval_logger.info("tool_use_metric",
                         f"Tool calls present but finish_reason={finish}; continuing as tool round",
                         {"round": round_no})
 
@@ -521,7 +527,7 @@ class ToolUseMetric(BaseMetric):
                     except json.JSONDecodeError:
                         # Unparsable tool call -> hard stop with 0 points
                         err = f"Round {round_no}, call {i+1}: unparsable tool arguments: {tc['arguments'][:200]}"
-                        eval_logger.decision("tool_use_metric", "Tool call not parseable; scoring 0", {"error": err})
+                        self.eval_logger.decision("tool_use_metric", "Tool call not parseable; scoring 0", {"error": err})
                         self.end_reason = ROUND_END_ERROR
                         self.evaluation_notes = err
                         self._finish_with_error(test_case, conversation, err)
@@ -537,7 +543,7 @@ class ToolUseMetric(BaseMetric):
                         )
                     except Exception as e:
                         err = f"Round {round_no}, call {i+1}: simulation failed: {str(e)}"
-                        eval_logger.decision("tool_use_metric", "Simulation failed; scoring 0", {"error": err})
+                        self.eval_logger.decision("tool_use_metric", "Simulation failed; scoring 0", {"error": err})
                         self.end_reason = ROUND_END_ERROR
                         self.evaluation_notes = err
                         self._finish_with_error(test_case, conversation, err)
@@ -560,7 +566,7 @@ class ToolUseMetric(BaseMetric):
         except Exception as e:
             # Generic abort: never lose an evaluation silently
             err = f"Evaluation aborted: {type(e).__name__}: {str(e)}"
-            eval_logger.log_error("tool_use_metric", err, {"traceback": str(e)})
+            self.eval_logger.log_error("tool_use_metric", err, {"traceback": str(e)})
             self.end_reason = ROUND_END_ERROR
             self.evaluation_notes = err
             self.score = ERROR_SCORE
@@ -584,7 +590,7 @@ class ToolUseMetric(BaseMetric):
         self.evaluation_notes = error
 
     def _finalize_evaluation(self, test_case: LLMTestCase, conversation: list) -> float:
-        eval_logger.info("tool_use_metric", "Starting final evaluation", {
+        self.eval_logger.info("tool_use_metric", "Starting final evaluation", {
             "end_reason": self.end_reason,
             "rounds": len(self.rounds),
             "final_answer_present": bool(self.final_answer),
@@ -597,7 +603,7 @@ class ToolUseMetric(BaseMetric):
             parsed = self._parse_evaluation_response(resp["content"])
         except Exception as e:
             err = f"Final evaluation unparsable: {str(e)}"
-            eval_logger.decision("tool_use_metric", "Final evaluation failed; scoring 0", {"error": err})
+            self.eval_logger.decision("tool_use_metric", "Final evaluation failed; scoring 0", {"error": err})
             self.end_reason = ROUND_END_ERROR
             self.evaluation_notes = err
             self._finish_with_error(test_case, conversation, err)
@@ -629,7 +635,7 @@ class ToolUseMetric(BaseMetric):
 
         self.score = final_score
         self.success = final_score >= self.threshold
-        eval_logger.decision("tool_use_metric", "Evaluation completed", {
+        self.eval_logger.decision("tool_use_metric", "Evaluation completed", {
             "score_0_10": internal_score,
             "score_0_1": final_score,
             "threshold": self.threshold,

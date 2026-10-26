@@ -23,13 +23,14 @@ class MetricCreator:
     Supports both G-Eval and DAG metric types with proper parameter mapping
     and structure conversion from frontend JSON to DeepEval objects.
     """
-    def __init__(self, metric: Metric, model: Optional[ModelInfo] = None, system_prompt: str = ""):
+    def __init__(self, metric: Metric, model: Optional[ModelInfo] = None, system_prompt: str = "", logger=None):
         self.metric = metric
         self.system_prompt = system_prompt
+        self.eval_logger = logger if logger is not None else eval_logger
         # Model under evaluation — required by tool-use metrics; behavior for the
         # existing metric types is unchanged (falls back to the judge model info).
         self.evaluatee = model if model is not None else self.metric.model
-        eval_logger.info("metric_creator", "Initialized metric creator", {
+        self.eval_logger.info("metric_creator", "Initialized metric creator", {
             "metric_name": metric.name,
             "metric_type": metric.type,
             "metric_params": metric.param,
@@ -48,10 +49,10 @@ class MetricCreator:
         Raises:
             ValueError: If metric type is unknown or definition is invalid
         """
-        eval_logger.info("metric_creator", "Starting metric creation")
+        self.eval_logger.info("metric_creator", "Starting metric creation")
         
         metric_definition = json.loads(self.metric.definition) if isinstance(self.metric.definition, str) else self.metric.definition
-        eval_logger.debug("metric_creator", "Parsed metric definition", {
+        self.eval_logger.debug("metric_creator", "Parsed metric definition", {
             "definition": metric_definition
         })
 
@@ -59,23 +60,24 @@ class MetricCreator:
         judge_model = Judge(
             api_base=self.metric.model.url,
             api_key=self.metric.model.key,
-            model_name=self.metric.model.name
+            model_name=self.metric.model.name,
+            logger=self.eval_logger
         )
-        eval_logger.info("metric_creator", "Created custom judge model", {
+        self.eval_logger.info("metric_creator", "Created custom judge model", {
             "judge_model_name": self.metric.model.name,
             "judge_api_base": self.metric.model.url
         })
         
         match self.metric.type:
             case "g-eval":
-                eval_logger.decision("metric_creator", "Creating G-Eval metric", {
+                self.eval_logger.decision("metric_creator", "Creating G-Eval metric", {
                     "metric_type": "g-eval",
                     "definition_type": metric_definition.get('type', 'criteria')
                 })
                 
                 # Get evaluation params to determine which fields to include
                 evaluation_params = self._get_metric_params()
-                eval_logger.info("metric_creator", "Determined evaluation parameters", {
+                self.eval_logger.info("metric_creator", "Determined evaluation parameters", {
                     "evaluation_params": [str(param) for param in evaluation_params]
                 })
                 
@@ -88,14 +90,14 @@ class MetricCreator:
                 
                 if metric_definition.get('type') == 'steps':
                     geval_kwargs['evaluation_steps'] = metric_definition.get('steps', [])
-                    eval_logger.decision("metric_creator", "Using steps-based G-Eval", {
+                    self.eval_logger.decision("metric_creator", "Using steps-based G-Eval", {
                         "steps": metric_definition.get('steps', []),
                         "steps_count": len(metric_definition.get('steps', []))
                     })
                     return GEval(**geval_kwargs)
                 elif metric_definition.get('type') == 'criteria':
                     geval_kwargs['criteria'] = metric_definition.get('criteria', '')
-                    eval_logger.decision("metric_creator", "Using criteria-based G-Eval", {
+                    self.eval_logger.decision("metric_creator", "Using criteria-based G-Eval", {
                         "criteria": metric_definition.get('criteria', ''),
                         "criteria_length": len(metric_definition.get('criteria', ''))
                     })
@@ -104,14 +106,14 @@ class MetricCreator:
                     # Default to criteria if no type specified
                     default_criteria = 'Evaluate the response quality'
                     geval_kwargs['criteria'] = metric_definition.get('criteria', default_criteria)
-                    eval_logger.decision("metric_creator", "Using default criteria-based G-Eval", {
+                    self.eval_logger.decision("metric_creator", "Using default criteria-based G-Eval", {
                         "criteria": geval_kwargs['criteria'],
                         "reason": "No type specified in metric definition"
                     })
                     return GEval(**geval_kwargs)
 
             case "tale":
-                eval_logger.decision("metric_creator", "Creating TALE metric", {
+                self.eval_logger.decision("metric_creator", "Creating TALE metric", {
                     "metric_type": "tale"
                 })
                 
@@ -143,14 +145,16 @@ class MetricCreator:
                 if metric_definition.get('time_range') is not None:
                     tale_kwargs['time_range'] = metric_definition.get('time_range')
 
-                eval_logger.info("metric_creator", "TALE metric configuration", {
+                tale_kwargs['logger'] = self.eval_logger
+
+                self.eval_logger.info("metric_creator", "TALE metric configuration", {
                     "provided_params": list(tale_kwargs.keys()),
                     "task": task
                 })
                 
                 tale_metric = TALEMetric(**tale_kwargs)
                 
-                eval_logger.decision("metric_creator", "TALE metric created successfully", {
+                self.eval_logger.decision("metric_creator", "TALE metric created successfully", {
                     "metric_name": self.metric.name,
                     "threshold": getattr(self.metric, 'threshold', 0.5)
                 })
@@ -158,13 +162,13 @@ class MetricCreator:
                 return tale_metric
             
             case "dag":
-                eval_logger.decision("metric_creator", "Creating DAG metric", {
+                self.eval_logger.decision("metric_creator", "Creating DAG metric", {
                     "metric_type": "dag"
                 })
                 
                 # Get evaluation params for all nodes
                 evaluation_params = self._get_metric_params()
-                eval_logger.info("metric_creator", "Determined evaluation parameters for DAG", {
+                self.eval_logger.info("metric_creator", "Determined evaluation parameters for DAG", {
                     "evaluation_params": [str(param) for param in evaluation_params]
                 })
                 
@@ -173,7 +177,7 @@ class MetricCreator:
                 if dag_definition is None:
                     raise ValueError("DAG definition cannot be None")
                     
-                eval_logger.debug("metric_creator", "Processing DAG definition", {
+                self.eval_logger.debug("metric_creator", "Processing DAG definition", {
                     "root_node_type": dag_definition.get('node'),
                     "has_children": bool(dag_definition.get('children'))
                 })
@@ -184,7 +188,7 @@ class MetricCreator:
                 root_node = self._create_dag_node(dag_definition, evaluation_params)
                 dag = DeepAcyclicGraph(root_nodes=[root_node])
                 
-                eval_logger.info("metric_creator", "Created DAG structure", {
+                self.eval_logger.info("metric_creator", "Created DAG structure", {
                     "root_node_type": type(root_node).__name__,
                     "total_nodes": self._count_nodes(dag_definition)
                 })
@@ -199,7 +203,7 @@ class MetricCreator:
                     threshold=getattr(self.metric, 'threshold', 0.5)  # Use metric threshold or default
                 )
                 
-                eval_logger.decision("metric_creator", "DAG metric created successfully", {
+                self.eval_logger.decision("metric_creator", "DAG metric created successfully", {
                     "metric_name": self.metric.name,
                     "threshold": getattr(self.metric, 'threshold', 0.5)
                 })
@@ -207,7 +211,7 @@ class MetricCreator:
                 return dag_metric
             
             case "tool-use":
-                eval_logger.decision("metric_creator", "Creating Tool Use metric", {
+                self.eval_logger.decision("metric_creator", "Creating Tool Use metric", {
                     "metric_type": "tool-use"
                 })
 
@@ -225,37 +229,38 @@ class MetricCreator:
                     definition=definition,
                     threshold=getattr(self.metric, 'threshold', 0.5),
                     system_prompt=getattr(self, 'system_prompt', '') or "",
+                    logger=self.eval_logger,
                 )
                 return tooluse_metric
 
             case _:
-                eval_logger.decision("metric_creator", "Unknown metric type encountered", {
+                self.eval_logger.decision("metric_creator", "Unknown metric type encountered", {
                     "metric_type": self.metric.type,
                     "error": f"Unknown metric type: {self.metric.type}"
                 })
                 raise ValueError(f"Unknown metric type: {self.metric.type}")
 
     def _get_metric_params(self):
-        eval_logger.info("metric_creator", "Determining metric parameters")
+        self.eval_logger.info("metric_creator", "Determining metric parameters")
         evaluation_params = []
         for param in self.metric.param:
             match param:
                 case 'input':
                     evaluation_params.append(LLMTestCaseParams.INPUT)
-                    eval_logger.debug("metric_creator", "Added INPUT parameter")
+                    self.eval_logger.debug("metric_creator", "Added INPUT parameter")
                 case 'actual_output':
                     evaluation_params.append(LLMTestCaseParams.ACTUAL_OUTPUT)
-                    eval_logger.debug("metric_creator", "Added ACTUAL_OUTPUT parameter")
+                    self.eval_logger.debug("metric_creator", "Added ACTUAL_OUTPUT parameter")
                 case 'expected_output':
                     evaluation_params.append(LLMTestCaseParams.EXPECTED_OUTPUT)
-                    eval_logger.debug("metric_creator", "Added EXPECTED_OUTPUT parameter")
+                    self.eval_logger.debug("metric_creator", "Added EXPECTED_OUTPUT parameter")
                 case 'context':
                     evaluation_params.append(LLMTestCaseParams.CONTEXT)
-                    eval_logger.debug("metric_creator", "Added CONTEXT parameter")
+                    self.eval_logger.debug("metric_creator", "Added CONTEXT parameter")
                 case _:
-                    eval_logger.debug("metric_creator", f"Unknown parameter ignored: {param}")
+                    self.eval_logger.debug("metric_creator", f"Unknown parameter ignored: {param}")
         
-        eval_logger.decision("metric_creator", "Final evaluation parameters determined", {
+        self.eval_logger.decision("metric_creator", "Final evaluation parameters determined", {
             "total_params": len(evaluation_params),
             "param_types": [str(param) for param in evaluation_params],
             "original_params": self.metric.param
@@ -293,7 +298,7 @@ class MetricCreator:
         Raises:
             ValueError: If node type is unknown or validation fails
         """
-        eval_logger.debug("metric_creator", "Creating DAG node", {
+        self.eval_logger.debug("metric_creator", "Creating DAG node", {
             "node_type": node_definition.get('node'),
             "has_children": bool(node_definition.get('children'))
         })
@@ -309,7 +314,7 @@ class MetricCreator:
         
         match node_type:
             case "tasknode":
-                eval_logger.debug("metric_creator", "Creating TaskNode", {
+                self.eval_logger.debug("metric_creator", "Creating TaskNode", {
                     "instructions": node_definition.get('instructions', ''),
                     "output_label": node_definition.get('outputLabel', ''),
                     "children_count": len(child_nodes)
@@ -326,7 +331,7 @@ class MetricCreator:
                 )
             
             case "binaryjudge":
-                eval_logger.debug("metric_creator", "Creating BinaryJudgementNode", {
+                self.eval_logger.debug("metric_creator", "Creating BinaryJudgementNode", {
                     "criteria": node_definition.get('criteria', ''),
                     "children_count": len(child_nodes)
                 })
@@ -343,7 +348,7 @@ class MetricCreator:
                 )
             
             case "nonbinaryjudge":
-                eval_logger.debug("metric_creator", "Creating NonBinaryJudgementNode", {
+                self.eval_logger.debug("metric_creator", "Creating NonBinaryJudgementNode", {
                     "criteria": node_definition.get('criteria', ''),
                     "children_count": len(child_nodes)
                 })
@@ -359,7 +364,7 @@ class MetricCreator:
                 )
             
             case "verdict":
-                eval_logger.debug("metric_creator", "Creating VerdictNode (string)", {
+                self.eval_logger.debug("metric_creator", "Creating VerdictNode (string)", {
                     "verdict": node_definition.get('verdict', ''),
                     "has_score": 'score' in node_definition,
                     "has_children": len(child_nodes) > 0
@@ -370,7 +375,7 @@ class MetricCreator:
                     "verdict": str(node_definition.get('verdict', ''))
                 }
                 
-                eval_logger.debug("metric_creator", "VerdictNode decision logic", {
+                self.eval_logger.debug("metric_creator", "VerdictNode decision logic", {
                     "has_explicit_score": 'score' in node_definition,
                     "child_nodes_count": len(child_nodes),
                     "will_use_score": 'score' in node_definition,
@@ -382,18 +387,18 @@ class MetricCreator:
                     frontend_score = node_definition.get('score')
                     deepeval_score = int(frontend_score * 10) if isinstance(frontend_score, (int, float)) else 0
                     verdict_kwargs['score'] = deepeval_score
-                    eval_logger.debug("metric_creator", "Using score for VerdictNode", {"score": deepeval_score})
+                    self.eval_logger.debug("metric_creator", "Using score for VerdictNode", {"score": deepeval_score})
                 elif len(child_nodes) > 0:
                     # If no score but has children, this is an intermediate VerdictNode
                     verdict_kwargs['child'] = child_nodes[0]  # VerdictNode can only have one child
-                    eval_logger.debug("metric_creator", "Using child for VerdictNode", {"child_type": type(child_nodes[0]).__name__})
+                    self.eval_logger.debug("metric_creator", "Using child for VerdictNode", {"child_type": type(child_nodes[0]).__name__})
                 else:
                     raise ValueError("VerdictNode must have either a score or a child")
                 
                 return VerdictNode(**verdict_kwargs)
             
             case "boolverdict":
-                eval_logger.debug("metric_creator", "Creating VerdictNode (boolean)", {
+                self.eval_logger.debug("metric_creator", "Creating VerdictNode (boolean)", {
                     "verdict": node_definition.get('verdict', False),
                     "has_score": 'score' in node_definition,
                     "has_children": len(child_nodes) > 0,
@@ -405,7 +410,7 @@ class MetricCreator:
                     "verdict": bool(node_definition.get('verdict', False))
                 }
                 
-                eval_logger.debug("metric_creator", "VerdictNode decision logic", {
+                self.eval_logger.debug("metric_creator", "VerdictNode decision logic", {
                     "has_explicit_score": 'score' in node_definition,
                     "child_nodes_count": len(child_nodes),
                     "will_use_score": 'score' in node_definition,
@@ -417,18 +422,18 @@ class MetricCreator:
                     frontend_score = node_definition.get('score')
                     deepeval_score = int(frontend_score * 10) if isinstance(frontend_score, (int, float)) else 0
                     verdict_kwargs['score'] = deepeval_score
-                    eval_logger.debug("metric_creator", "Using score for VerdictNode", {"score": deepeval_score})
+                    self.eval_logger.debug("metric_creator", "Using score for VerdictNode", {"score": deepeval_score})
                 elif len(child_nodes) > 0:
                     # If no score but has children, this is an intermediate VerdictNode
                     verdict_kwargs['child'] = child_nodes[0]  # VerdictNode can only have one child
-                    eval_logger.debug("metric_creator", "Using child for VerdictNode", {"child_type": type(child_nodes[0]).__name__})
+                    self.eval_logger.debug("metric_creator", "Using child for VerdictNode", {"child_type": type(child_nodes[0]).__name__})
                 else:
                     raise ValueError("VerdictNode must have either a score or a child")
                 
                 return VerdictNode(**verdict_kwargs)
             
             case _:
-                eval_logger.decision("metric_creator", "Unknown DAG node type", {
+                self.eval_logger.decision("metric_creator", "Unknown DAG node type", {
                     "node_type": node_type,
                     "available_types": ["tasknode", "binaryjudge", "nonbinaryjudge", "verdict", "boolverdict"],
                     "error": f"Unknown DAG node type: {node_type}"

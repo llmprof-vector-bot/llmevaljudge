@@ -2,7 +2,7 @@ from models import Prompt, Metric, ModelInfo
 from deepeval.test_case import LLMTestCase
 from metric_creator import MetricCreator
 from llmrequestor import LlmRequestor
-from eval_logger import eval_logger
+from eval_logger import EvalLogger
 import json
 
 class Evaluator:
@@ -11,10 +11,10 @@ class Evaluator:
         self.metric = metric
         self.model = model
         self.system_prompt = system_prompt
-        
-        # Reset logger for this evaluation
-        eval_logger.reset()
-        eval_logger.info("evaluator", "Initialized evaluator", {
+
+        # one logger instance per evaluation.
+        self.eval_logger = EvalLogger(enable_terminal_output=True, verbose_terminal=True)
+        self.eval_logger.info("evaluator", "Initialized evaluator", {
             "prompt_input": prompt.input[:100] + "..." if len(prompt.input) > 100 else prompt.input,
             "metric_name": metric.name,
             "metric_type": metric.type,
@@ -23,14 +23,14 @@ class Evaluator:
         })
 
     def evaluate(self):
-        eval_logger.info("evaluator", "Starting evaluation process")
+        self.eval_logger.info("evaluator", "Starting evaluation process")
 
         if self.metric.type == "tool-use":
             # The tool-use metric loop produces actual_output itself (full conversation
             # including tool rounds), so the single-request model call is skipped.
-            eval_logger.info("evaluator", "Tool-use metric: skipping direct model request (loop builds output)")
+            self.eval_logger.info("evaluator", "Tool-use metric: skipping direct model request (loop builds output)")
 
-            metric_creator = MetricCreator(self.metric, model=self.model, system_prompt=self.system_prompt)
+            metric_creator = MetricCreator(self.metric, model=self.model, system_prompt=self.system_prompt, logger=self.eval_logger)
             metric_instance = metric_creator.create_metric()
 
             context_list = [self.prompt.context] if self.prompt.context else []
@@ -41,10 +41,10 @@ class Evaluator:
                 context=context_list
             )
 
-            eval_logger.info("evaluator", "Starting metric measurement for tool-use")
+            self.eval_logger.info("evaluator", "Starting metric measurement for tool-use")
             metric_instance.measure(test_case)
 
-            eval_logger.info("evaluator", "Evaluation completed", {
+            self.eval_logger.info("evaluator", "Evaluation completed", {
                 "score": metric_instance.score,
                 "reason_length": len(metric_instance.reason) if metric_instance.reason else 0
             })
@@ -52,7 +52,7 @@ class Evaluator:
             # The metric loop's final answer is the model's actual response:
             actual_output = getattr(metric_instance, "final_answer", "") or "(no final answer: aborted or round limit reached)"
 
-            logs = eval_logger.get_logs()
+            logs = self.eval_logger.get_logs()
             # Tool-round transcript as structured extra info for the UI:
             rounds_info = getattr(metric_instance, "rounds", [])
             end_reason = getattr(metric_instance, "end_reason", "")
@@ -70,11 +70,11 @@ class Evaluator:
             return result
 
         # Generate actual output using the model
-        eval_logger.info("evaluator", "Requesting LLM response for evaluation")
-        requestor = LlmRequestor(self.prompt, self.model, self.system_prompt)
+        self.eval_logger.info("evaluator", "Requesting LLM response for evaluation")
+        requestor = LlmRequestor(self.prompt, self.model, self.system_prompt, logger=self.eval_logger)
         actual_output = requestor.request()
 
-        eval_logger.info("evaluator", "Creating test case", {
+        self.eval_logger.info("evaluator", "Creating test case", {
             "has_expected_output": bool(self.prompt.expected_output),
             "has_context": bool(self.prompt.context),
             "actual_output_length": len(actual_output)
@@ -90,14 +90,14 @@ class Evaluator:
         )
 
         # Create metric instance and evaluate
-        eval_logger.info("evaluator", "Creating metric instance")
-        metric_instance = MetricCreator(self.metric).create_metric()
+        self.eval_logger.info("evaluator", "Creating metric instance")
+        metric_instance = MetricCreator(self.metric, logger=self.eval_logger).create_metric()
         
-        eval_logger.info("evaluator", "Starting metric measurement")
+        self.eval_logger.info("evaluator", "Starting metric measurement")
         # Measure the test case
         metric_instance.measure(test_case)
         
-        eval_logger.info("evaluator", "Evaluation completed", {
+        self.eval_logger.info("evaluator", "Evaluation completed", {
             "score": metric_instance.score,
             "reason_length": len(metric_instance.reason) if metric_instance.reason else 0
         })
@@ -106,11 +106,11 @@ class Evaluator:
             'actual_output': actual_output,
             'score': metric_instance.score,
             'reason': metric_instance.reason,
-            'logs': json.dumps(eval_logger.get_logs())  # Convert logs array to JSON string
+            'logs': json.dumps(self.eval_logger.get_logs())  # Convert logs array to JSON string
         }
         
-        eval_logger.info("evaluator", "Returning evaluation result with logs", {
-            "total_log_entries": len(eval_logger.get_logs())
+        self.eval_logger.info("evaluator", "Returning evaluation result with logs", {
+            "total_log_entries": len(self.eval_logger.get_logs())
         })
         
         return result

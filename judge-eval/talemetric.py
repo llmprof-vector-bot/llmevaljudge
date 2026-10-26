@@ -17,7 +17,8 @@ class TALEMetric(BaseMetric):
         max_iterations: int = 3,
         search_engines: list = ["google", "bing", "duckduckgo"],
         search_engine_url: str = "http://judge_searxng:80",
-        time_range: str = "all"
+        time_range: str = "all",
+        logger=None
     ):
         self.model = model
         self.threshold = threshold
@@ -37,8 +38,12 @@ class TALEMetric(BaseMetric):
         # Initialize state variables
         self.collected_evidence = {}
         self._last_search_query = ""
-        
-        eval_logger.info("tale_metric", "Initialized TALE metric", {
+
+        # Per-evaluation logger (Route A: no shared log state between concurrent
+        # evaluations run by the FastAPI thread pool).
+        self.eval_logger = logger if logger is not None else eval_logger
+
+        self.eval_logger.info("tale_metric", "Initialized TALE metric", {
             "task": task,
             "threshold": threshold,
             "max_search_results": max_search_results,
@@ -50,7 +55,7 @@ class TALEMetric(BaseMetric):
         Main evaluation method implementing the TALE (Tool-Augmented LLM Evaluation) approach.
         """
         try:
-            eval_logger.info("tale_metric", "Starting TALE evaluation", {
+            self.eval_logger.info("tale_metric", "Starting TALE evaluation", {
                 "input": test_case.input,
                 "actual_output": test_case.actual_output,
                 "expected_output": test_case.expected_output,
@@ -60,12 +65,12 @@ class TALEMetric(BaseMetric):
             # Validate required inputs
             if not test_case.input or not test_case.actual_output:
                 error_msg = "TALE metric requires both input and actual_output to be provided"
-                eval_logger.decision("tale_metric", "Validation failed", {"error": error_msg})
+                self.eval_logger.decision("tale_metric", "Validation failed", {"error": error_msg})
                 raise ValueError(error_msg)
 
             if not self.task:
                 error_msg = "TALE metric requires a task to be specified"
-                eval_logger.decision("tale_metric", "Validation failed", {"error": error_msg})
+                self.eval_logger.decision("tale_metric", "Validation failed", {"error": error_msg})
                 raise ValueError(error_msg)
 
             # enter the evaluation loop
@@ -77,7 +82,7 @@ class TALEMetric(BaseMetric):
             all_unresponsive_engines = []  # Track unresponsive engines across iterations
             
             for i in range(self.max_iterations):
-                eval_logger.info("tale_metric", f"Starting evaluation iteration {i + 1}", {
+                self.eval_logger.info("tale_metric", f"Starting evaluation iteration {i + 1}", {
                     "input": test_case.input,
                     "actual_output": test_case.actual_output,
                     "expected_output": test_case.expected_output,
@@ -91,12 +96,12 @@ class TALEMetric(BaseMetric):
                     
                     if not search_query or search_query.strip() == "":
                         error_msg = f"Failed to generate valid search query at iteration {i + 1}"
-                        eval_logger.decision("tale_metric", "Search query generation failed", {"error": error_msg})
+                        self.eval_logger.decision("tale_metric", "Search query generation failed", {"error": error_msg})
                         raise ValueError(error_msg)
                         
                 except Exception as e:
                     error_msg = f"Failed to generate search query at iteration {i + 1}: {str(e)}"
-                    eval_logger.decision("tale_metric", "Search query generation failed", {"error": error_msg})
+                    self.eval_logger.decision("tale_metric", "Search query generation failed", {"error": error_msg})
                     raise ValueError(error_msg)
 
                 # Perform web search using the generated query
@@ -110,7 +115,7 @@ class TALEMetric(BaseMetric):
                         all_unresponsive_engines.extend(unresponsive_engines)
                     
                     if search_results:
-                        eval_logger.info("tale_metric", f"Search successful with results", {
+                        self.eval_logger.info("tale_metric", f"Search successful with results", {
                             "query": search_query,
                             "results_count": len(search_results),
                             "unresponsive_engines_count": len(unresponsive_engines) if unresponsive_engines else 0
@@ -121,13 +126,13 @@ class TALEMetric(BaseMetric):
                                 f"{engine_info[0]}: {engine_info[1]}" if isinstance(engine_info, list) and len(engine_info) >= 2 
                                 else str(engine_info) for engine_info in unresponsive_engines
                             ])
-                            eval_logger.info("tale_metric", f"Search successful but returned no results (unresponsive engines: {unresponsive_summary})", {
+                            self.eval_logger.info("tale_metric", f"Search successful but returned no results (unresponsive engines: {unresponsive_summary})", {
                                 "query": search_query,
                                 "iteration": i + 1,
                                 "unresponsive_engines": unresponsive_engines
                             })
                         else:
-                            eval_logger.info("tale_metric", f"Search successful but returned no results", {
+                            self.eval_logger.info("tale_metric", f"Search successful but returned no results", {
                                 "query": search_query,
                                 "iteration": i + 1
                             })
@@ -135,7 +140,7 @@ class TALEMetric(BaseMetric):
                 except Exception as e:
                     search_engine_failures += 1
                     error_msg = f"Search engine failed at iteration {i + 1}: {str(e)}"
-                    eval_logger.decision("tale_metric", "Search engine failure", {
+                    self.eval_logger.decision("tale_metric", "Search engine failure", {
                         "error": error_msg,
                         "query": search_query,
                         "iteration": i + 1
@@ -151,7 +156,7 @@ class TALEMetric(BaseMetric):
                 # Process search results
                 iteration_evidence_count = 0
                 for result in search_results:
-                    eval_logger.info("tale_metric", "Processing search result", {
+                    self.eval_logger.info("tale_metric", "Processing search result", {
                         "title": result.get("title"),
                         "url": result.get("url"),
                         "snippet": result.get("snippet")
@@ -163,11 +168,11 @@ class TALEMetric(BaseMetric):
                         memory[result.get("url")] = website_content
                         iteration_evidence_count += 1
                     else:
-                        eval_logger.debug("tale_metric", "Failed to extract content from URL", {
+                        self.eval_logger.debug("tale_metric", "Failed to extract content from URL", {
                             "url": result.get("url")
                         })
 
-                eval_logger.info("tale_metric", f"Iteration {i + 1} evidence collection", {
+                self.eval_logger.info("tale_metric", f"Iteration {i + 1} evidence collection", {
                     "new_evidence_sources": iteration_evidence_count,
                     "total_evidence_sources": len(memory)
                 })
@@ -180,7 +185,7 @@ class TALEMetric(BaseMetric):
                         break
                 except Exception as e:
                     error_msg = f"Failed to reflect on evidence at iteration {i + 1}: {str(e)}"
-                    eval_logger.decision("tale_metric", "Reflection failed", {"error": error_msg})
+                    self.eval_logger.decision("tale_metric", "Reflection failed", {"error": error_msg})
                     raise ValueError(error_msg)
 
             # Check if we have any evidence at all after all iterations
@@ -208,7 +213,7 @@ class TALEMetric(BaseMetric):
                 else:
                     error_msg = f"No evidence was collected after {self.max_iterations} search iterations. Search attempts: {total_search_attempts}, successful: {successful_searches}, failures: {search_engine_failures}.{unresponsive_summary}"
                 
-                eval_logger.decision("tale_metric", "No evidence collected", {
+                self.eval_logger.decision("tale_metric", "No evidence collected", {
                     "error": error_msg,
                     "total_search_attempts": total_search_attempts,
                     "successful_searches": successful_searches,
@@ -217,7 +222,7 @@ class TALEMetric(BaseMetric):
                 })
                 raise ValueError(error_msg)
 
-            eval_logger.info("tale_metric", "Evidence collection completed", {
+            self.eval_logger.info("tale_metric", "Evidence collection completed", {
                 "total_evidence_sources": len(memory),
                 "total_search_attempts": total_search_attempts,
                 "successful_searches": successful_searches,
@@ -233,24 +238,24 @@ class TALEMetric(BaseMetric):
                 self.reason = judgement.get("reason", "")
             except Exception as e:
                 error_msg = f"Failed to make final judgment: {str(e)}"
-                eval_logger.decision("tale_metric", "Final judgment failed", {"error": error_msg})
+                self.eval_logger.decision("tale_metric", "Final judgment failed", {"error": error_msg})
                 raise ValueError(error_msg)
 
             # Validate final results
             if self.score is None or not isinstance(self.score, (int, float)):
                 error_msg = f"Invalid score returned from judgment: {self.score}"
-                eval_logger.decision("tale_metric", "Invalid score", {"error": error_msg})
+                self.eval_logger.decision("tale_metric", "Invalid score", {"error": error_msg})
                 raise ValueError(error_msg)
 
             if not self.reason or not isinstance(self.reason, str):
                 error_msg = f"Invalid or empty reason returned from judgment: {self.reason}"
-                eval_logger.decision("tale_metric", "Invalid reason", {"error": error_msg})
+                self.eval_logger.decision("tale_metric", "Invalid reason", {"error": error_msg})
                 raise ValueError(error_msg)
 
             # Determine success based on threshold
             self.success = self.score >= self.threshold
             
-            eval_logger.decision("tale_metric", "TALE evaluation completed successfully", {
+            self.eval_logger.decision("tale_metric", "TALE evaluation completed successfully", {
                 "score": self.score,
                 "reason_length": len(self.reason),
                 "success": self.success,
@@ -261,7 +266,7 @@ class TALEMetric(BaseMetric):
             
         except Exception as e:
             self.error = str(e)
-            eval_logger.decision("tale_metric", f"TALE evaluation failed with error: {str(e)}", {
+            self.eval_logger.decision("tale_metric", f"TALE evaluation failed with error: {str(e)}", {
                 "error_type": type(e).__name__,
                 "error_message": str(e)
             })
@@ -330,14 +335,14 @@ class TALEMetric(BaseMetric):
         )
 
         try:
-            eval_logger.conversation("tale_metric", "Generating search query", {
+            self.eval_logger.conversation("tale_metric", "Generating search query", {
                 "prompt_length": len(prompt),
                 "has_reflection": bool(reflection and reflection.get('previous_query'))
             })
             
             query = self.model.generate(prompt)
             
-            eval_logger.conversation("tale_metric", "Search query generated", {
+            self.eval_logger.conversation("tale_metric", "Search query generated", {
                 "query": query,
                 "query_length": len(query) if query else 0
             })
@@ -352,7 +357,7 @@ class TALEMetric(BaseMetric):
             return query
             
         except Exception as e:
-            eval_logger.debug("tale_metric", f"Search query generation failed: {str(e)}")
+            self.eval_logger.debug("tale_metric", f"Search query generation failed: {str(e)}")
             raise ValueError(f"Failed to generate search query: {str(e)}")
 
     def _search_engine(self, query: str, engines: list, time_range: str) -> tuple:
@@ -376,7 +381,7 @@ class TALEMetric(BaseMetric):
         # Join engines as a comma-separated string for the API
         engines_param = ",".join(engines) if engines else "google"
         
-        eval_logger.info("tale_metric", "Making search request", {
+        self.eval_logger.info("tale_metric", "Making search request", {
             "query": query,
             "engines": engines_param,
             "time_range": time_range,
@@ -393,7 +398,7 @@ class TALEMetric(BaseMetric):
             
         except requests.exceptions.Timeout as e:
             error_msg = f"Search engine request timed out after 10 seconds: {str(e)}"
-            eval_logger.debug("tale_metric", error_msg, {
+            self.eval_logger.debug("tale_metric", error_msg, {
                 "query": query,
                 "url": self.search_engine_url,
                 "timeout": 100
@@ -402,7 +407,7 @@ class TALEMetric(BaseMetric):
             
         except requests.exceptions.ConnectionError as e:
             error_msg = f"Search engine connection failed: {str(e)}"
-            eval_logger.debug("tale_metric", error_msg, {
+            self.eval_logger.debug("tale_metric", error_msg, {
                 "query": query,
                 "url": self.search_engine_url
             })
@@ -411,7 +416,7 @@ class TALEMetric(BaseMetric):
         except requests.exceptions.HTTPError as e:
             status_code = getattr(e.response, 'status_code', 'unknown') if hasattr(e, 'response') else 'unknown'
             error_msg = f"Search engine HTTP error (status {status_code}): {str(e)}"
-            eval_logger.debug("tale_metric", error_msg, {
+            self.eval_logger.debug("tale_metric", error_msg, {
                 "query": query,
                 "url": self.search_engine_url,
                 "status_code": status_code
@@ -420,7 +425,7 @@ class TALEMetric(BaseMetric):
             
         except Exception as e:
             error_msg = f"Search engine request failed with unexpected error: {str(e)}"
-            eval_logger.debug("tale_metric", error_msg, {
+            self.eval_logger.debug("tale_metric", error_msg, {
                 "query": query,
                 "url": self.search_engine_url,
                 "error_type": type(e).__name__
@@ -444,7 +449,7 @@ class TALEMetric(BaseMetric):
                     else:
                         unresponsive_info.append(str(engine_info))
                 
-                eval_logger.info("tale_metric", "Search completed with unresponsive engines", {
+                self.eval_logger.info("tale_metric", "Search completed with unresponsive engines", {
                     "status_code": response.status_code,
                     "results_count": len(results),
                     "query": query,
@@ -452,7 +457,7 @@ class TALEMetric(BaseMetric):
                     "unresponsive_engines_summary": unresponsive_info
                 })
             else:
-                eval_logger.info("tale_metric", "Search request completed successfully", {
+                self.eval_logger.info("tale_metric", "Search request completed successfully", {
                     "status_code": response.status_code,
                     "results_count": len(results),
                     "query": query
@@ -465,7 +470,7 @@ class TALEMetric(BaseMetric):
                         f"{engine_info[0]}: {engine_info[1]}" if isinstance(engine_info, list) and len(engine_info) >= 2 
                         else str(engine_info) for engine_info in unresponsive_engines
                     ])
-                    eval_logger.info("tale_metric", "Search engine returned no results (with unresponsive engines)", {
+                    self.eval_logger.info("tale_metric", "Search engine returned no results (with unresponsive engines)", {
                         "query": query,
                         "requested_engines": engines_param,
                         "unresponsive_engines": unresponsive_engines,
@@ -473,7 +478,7 @@ class TALEMetric(BaseMetric):
                         "response_data": results_data
                     })
                 else:
-                    eval_logger.info("tale_metric", "Search engine returned no results", {
+                    self.eval_logger.info("tale_metric", "Search engine returned no results", {
                         "query": query,
                         "requested_engines": engines_param,
                         "response_data": results_data
@@ -483,7 +488,7 @@ class TALEMetric(BaseMetric):
             
         except ValueError as e:
             error_msg = f"Search engine response parsing failed: {str(e)}"
-            eval_logger.debug("tale_metric", error_msg, {
+            self.eval_logger.debug("tale_metric", error_msg, {
                 "query": query,
                 "url": self.search_engine_url
             })
@@ -500,7 +505,7 @@ class TALEMetric(BaseMetric):
             soup = BeautifulSoup(html, "html.parser")
             return soup.get_text()
         except Exception as e:
-            eval_logger.debug("tale_metric", f"Web scraping failed: {str(e)}")
+            self.eval_logger.debug("tale_metric", f"Web scraping failed: {str(e)}")
             return ""
 
     def _reflect_on_evidence(self, memory: dict, test_case: LLMTestCase, iteration: int) -> dict:
@@ -515,7 +520,7 @@ class TALEMetric(BaseMetric):
         Returns:
             Dict with reflection results including whether to continue iterating
         """
-        eval_logger.info("tale_metric", f"Reflecting on evidence (iteration {iteration})", {
+        self.eval_logger.info("tale_metric", f"Reflecting on evidence (iteration {iteration})", {
             "evidence_sources": len(memory),
             "iteration": iteration,
             "max_iterations": self.max_iterations
@@ -523,7 +528,7 @@ class TALEMetric(BaseMetric):
         
         # If we've reached max iterations, stop searching
         if iteration >= self.max_iterations:
-            eval_logger.decision("tale_metric", "Stopping search: max iterations reached", {
+            self.eval_logger.decision("tale_metric", "Stopping search: max iterations reached", {
                 "iteration": iteration,
                 "max_iterations": self.max_iterations
             })
@@ -535,7 +540,7 @@ class TALEMetric(BaseMetric):
         
         # If no evidence collected, continue searching
         if not memory:
-            eval_logger.decision("tale_metric", "Continuing search: no evidence collected", {
+            self.eval_logger.decision("tale_metric", "Continuing search: no evidence collected", {
                 "iteration": iteration
             })
             return {
@@ -551,7 +556,7 @@ class TALEMetric(BaseMetric):
         reflection_prompt = self._build_reflection_prompt(test_case, evidence_summary, iteration)
         
         # Get LLM reflection
-        eval_logger.conversation("tale_metric", "Requesting reflection from LLM", {
+        self.eval_logger.conversation("tale_metric", "Requesting reflection from LLM", {
             "prompt_length": len(reflection_prompt),
             "evidence_sources": len(memory)
         })
@@ -567,10 +572,10 @@ class TALEMetric(BaseMetric):
                 raise ValueError("Model returned empty reflection response")
                 
         except Exception as e:
-            eval_logger.debug("tale_metric", f"Reflection generation failed: {str(e)}")
+            self.eval_logger.debug("tale_metric", f"Reflection generation failed: {str(e)}")
             raise ValueError(f"Failed to generate reflection: {str(e)}")
         
-        eval_logger.conversation("tale_metric", "Received reflection response", {
+        self.eval_logger.conversation("tale_metric", "Received reflection response", {
             "response": reflection_response,
             "iteration": iteration
         })
@@ -578,7 +583,7 @@ class TALEMetric(BaseMetric):
         # Parse reflection response to determine if more search is needed
         should_continue = self._parse_reflection_response(reflection_response)
         
-        eval_logger.decision("tale_metric", "Reflection decision made", {
+        self.eval_logger.decision("tale_metric", "Reflection decision made", {
             "should_continue": should_continue,
             "iteration": iteration,
             "evidence_sources": len(memory)
@@ -603,7 +608,7 @@ class TALEMetric(BaseMetric):
         Returns:
             Dict with score (0.0-1.0) and reasoning
         """
-        eval_logger.info("tale_metric", "Starting final judgment", {
+        self.eval_logger.info("tale_metric", "Starting final judgment", {
             "evidence_sources": len(memory),
             "task": self.task
         })
@@ -611,7 +616,7 @@ class TALEMetric(BaseMetric):
         # If no evidence was collected, this is an error condition
         if not memory:
             error_msg = "No evidence was collected to evaluate the response against the task requirements"
-            eval_logger.decision("tale_metric", "No evidence available for judgment", {
+            self.eval_logger.decision("tale_metric", "No evidence available for judgment", {
                 "error": error_msg,
                 "task": self.task
             })
@@ -623,7 +628,7 @@ class TALEMetric(BaseMetric):
         # Build judgment prompt
         judgment_prompt = self._build_judgment_prompt(test_case, evidence_summary)
         
-        eval_logger.conversation("tale_metric", "Requesting final judgment from LLM", {
+        self.eval_logger.conversation("tale_metric", "Requesting final judgment from LLM", {
             "prompt_length": len(judgment_prompt),
             "evidence_sources": len(memory),
             "task": self.task
@@ -641,10 +646,10 @@ class TALEMetric(BaseMetric):
                 raise ValueError("Model returned empty judgment response")
                 
         except Exception as e:
-            eval_logger.debug("tale_metric", f"Judgment generation failed: {str(e)}")
+            self.eval_logger.debug("tale_metric", f"Judgment generation failed: {str(e)}")
             raise ValueError(f"Failed to generate judgment: {str(e)}")
         
-        eval_logger.conversation("tale_metric", "Received judgment response", {
+        self.eval_logger.conversation("tale_metric", "Received judgment response", {
             "response_length": len(judgment_response)
         })
         
@@ -668,10 +673,10 @@ class TALEMetric(BaseMetric):
                 raise ValueError(f"Invalid or empty reason in judgment: {reason}")
                 
         except Exception as e:
-            eval_logger.debug("tale_metric", f"Judgment parsing failed: {str(e)}")
+            self.eval_logger.debug("tale_metric", f"Judgment parsing failed: {str(e)}")
             raise ValueError(f"Failed to parse judgment response: {str(e)}")
         
-        eval_logger.decision("tale_metric", "Final judgment completed", {
+        self.eval_logger.decision("tale_metric", "Final judgment completed", {
             "score": parsed_judgment["score"],
             "reason_length": len(parsed_judgment["reason"])
         })
@@ -839,7 +844,7 @@ Your evaluation:"""
                     # Ensure score is in valid range
                     score = max(0.0, min(1.0, score))
                 except ValueError:
-                    eval_logger.debug("tale_metric", f"Could not parse score: {score_str}")
+                    self.eval_logger.debug("tale_metric", f"Could not parse score: {score_str}")
                     # Don't set score to 0.0 here, let it remain None to trigger error below
                 capturing_reason = False
                 
