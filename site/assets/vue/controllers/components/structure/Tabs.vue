@@ -1,6 +1,7 @@
 <template>
     <ul
         class="nav mb-4 border-bottom border-2 flex-nowrap overflow-auto hide-scrollbar"
+        :class="{ 'tabs-sticky': sticky }"
         id="settingsTabs"
         role="tablist"
     >
@@ -86,6 +87,10 @@ export default {
         mark: {
             type: String,
         },
+        sticky: {
+            type: Boolean,
+            default: false,
+        },
     },
     methods: {
         updateTab(tabId) {
@@ -137,6 +142,16 @@ export default {
 
 .tab-button.active {
     color: var(--bs-primary) !important;
+}
+
+/* Opt-in sticky mode: the tab bar stays pinned to the top of the scrolling
+   content area while the page is scrolled. The solid background and z-index
+   make sure content (cards, charts) passing underneath stays hidden. */
+.tabs-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 1020;
+    background-color: var(--bs-body-bg);
 }
 
 #mark {

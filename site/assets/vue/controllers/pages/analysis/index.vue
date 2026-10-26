@@ -108,7 +108,11 @@
                     Analysis by Model
                 </h2>
 
-                <Tabs v-if="modelTabs.length > 0" :tabs="modelTabs">
+                <Tabs
+                    v-if="modelTabs.length > 0"
+                    :tabs="modelTabs"
+                    sticky
+                >
                     <template
                         v-for="model in models"
                         :key="`${model.id}-pane`"
