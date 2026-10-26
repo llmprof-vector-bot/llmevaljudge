@@ -200,6 +200,10 @@ class BenchmarkController extends BaseApiController
             $benchmark->setRepeatCount((int) $data['repeatCount']);
         }
 
+        if (isset($data['sampleCount'])) {
+            $benchmark->setSampleCount((int) $data['sampleCount']);
+        }
+
         if (isset($data['startedAt'])) {
             $startedAt = new \DateTimeImmutable($data['startedAt']);
             $benchmark->setStartedAt($startedAt);

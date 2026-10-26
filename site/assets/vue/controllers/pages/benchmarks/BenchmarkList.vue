@@ -103,6 +103,15 @@
                                     >{{ benchmark.repeatCount }}×</span
                                 >
                             </div>
+                            <div
+                                v-if="benchmark.sampleCount > 1"
+                                class="d-flex justify-content-between mb-1"
+                            >
+                                <span>Samples:</span>
+                                <span class="fw-bold"
+                                    >{{ benchmark.sampleCount }}×</span
+                                >
+                            </div>
 
                             <div
                                 v-if="benchmark.startedAt"

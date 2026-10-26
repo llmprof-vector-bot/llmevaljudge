@@ -55,9 +55,9 @@ final class EvaluatePromptHandler
         $maxRetries = $this->envInt('EVAL_MAX_RETRIES', 5);
 
         try {
-            // Check if a result already exists for this prompt/metric/model/benchmark/runIndex combination
+            // Check if a result already exists for this prompt/metric/model/benchmark/sampleIndex/runIndex combination
             $existingResult = $this->entityManager->getRepository(Result::class)
-                ->findByPromptMetricModelBenchmarkAndRun($prompt, $metric, $model, $benchmark, $message->runIndex);
+                ->findByPromptMetricModelBenchmarkAndRun($prompt, $metric, $model, $benchmark, $message->runIndex, $message->sampleIndex);
 
             // Prepare data for Python evaluation service
             $evaluationData = [
@@ -86,7 +86,8 @@ final class EvaluatePromptHandler
                     ]
                 ],
                 'system_prompt' => $this->getSystemPrompt($prompt),
-                'run_index' => $message->runIndex
+                'run_index' => $message->runIndex,
+                'sample_index' => $message->sampleIndex
             ];
 
             // Call Python evaluation service
@@ -107,6 +108,7 @@ final class EvaluatePromptHandler
             $resultEntity->setModel($model);
             $resultEntity->setBenchmark($benchmark);
             $resultEntity->setRunIndex($message->runIndex);
+            $resultEntity->setSampleIndex($message->sampleIndex);
             $resultEntity->setActualOutput($result['actual_output'] ?? '');
             $resultEntity->setScore($result['score'] ?? 0.0);
             $resultEntity->setReason($result['reason'] ?? '');
@@ -149,7 +151,8 @@ final class EvaluatePromptHandler
                     $message->modelId,
                     $message->benchmarkId,
                     $message->runIndex,
-                    $message->attempt + 1
+                    $message->attempt + 1,
+                    $message->sampleIndex
                 );
 
                 // Add a small delay before retry
@@ -181,7 +184,7 @@ final class EvaluatePromptHandler
 
             // Check for existing result and remove it if it exists for this benchmark
             $existingResult = $this->entityManager->getRepository(Result::class)
-                ->findByPromptMetricModelBenchmarkAndRun($prompt, $metric, $model, $benchmark, $message->runIndex);
+                ->findByPromptMetricModelBenchmarkAndRun($prompt, $metric, $model, $benchmark, $message->runIndex, $message->sampleIndex);
 
             if ($existingResult) {
                 $this->entityManager->remove($existingResult);
@@ -272,6 +275,7 @@ final class EvaluatePromptHandler
     {
         $count = 0;
         $repeatCount = $benchmark->getRepeatCount();
+        $sampleCount = $benchmark->getSampleCount();
 
         // Must stay consistent with RunBenchmarkHandler dispatch: same resolver,
         // same metric->test cases pairing (empty assignment = all test cases), same
@@ -287,7 +291,7 @@ final class EvaluatePromptHandler
                         continue;
                     }
 
-                    $count += count($benchmark->getModels()) * $repeatCount;
+                    $count += count($benchmark->getModels()) * $sampleCount * $repeatCount;
                 }
             }
         }

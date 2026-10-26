@@ -14,7 +14,7 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 #[AsCommand(
     name: 'benchmark:analyze-cache',
-    description: 'Analyze cache integrity: detect results where the model answer differs across repeats/metrics for the same prompt+model combination',
+    description: 'Analyze cache integrity: detect results where the model answer differs within the same model sample (prompt+model+sample combination). Answers differing across samples are expected (fresh generations).',
 )]
 class AnalyzeCacheIntegrityCommand extends Command
 {
@@ -47,7 +47,7 @@ class AnalyzeCacheIntegrityCommand extends Command
         $conn = $this->entityManager->getConnection();
 
         $rows = $conn->fetchAllAssociative('
-            SELECT r.id, r.prompt_id, r.model_id, r.metric_id, r.run_index,
+            SELECT r.id, r.prompt_id, r.model_id, r.metric_id, r.run_index, r.sample_index,
                    MD5(r.actual_output) AS answer_hash,
                    m.name AS model_name,
                    met.name AS metric_name
@@ -59,14 +59,15 @@ class AnalyzeCacheIntegrityCommand extends Command
 
         $io->text(sprintf('Total results: %d', count($rows)));
 
-        // Group by prompt+model (the cache key dimensions)
+        // Group by prompt+model+sample (the cache key dimensions): results in the
+        // same group judged the exact same cached model response.
         $groups = [];
         foreach ($rows as $row) {
-            $key = $row['prompt_id'] . '-' . $row['model_id'];
+            $key = $row['prompt_id'] . '-' . $row['model_id'] . '-' . $row['sample_index'];
             $groups[$key][] = $row;
         }
 
-        $io->text(sprintf('Unique prompt+model combinations: %d', count($groups)));
+        $io->text(sprintf('Unique prompt+model+sample combinations: %d', count($groups)));
         $io->newLine();
 
         // Analyze each group
@@ -141,7 +142,7 @@ class AnalyzeCacheIntegrityCommand extends Command
         $io->table(['Metric', 'To re-run'], $metricRows);
 
         // Distinct answers distribution
-        $io->section('Distinct answers per prompt+model combination');
+        $io->section('Distinct answers per prompt+model+sample combination');
         $distribution = [];
         foreach ($groups as $groupRows) {
             $hashes = [];

@@ -18,9 +18,11 @@ class ResultRepository extends ServiceEntityRepository
     }
 
     /**
-     * Find an existing result by the combination of prompt, metric, model, benchmark, and runIndex
+     * Find an existing result by the combination of prompt, metric, model,
+     * benchmark, sampleIndex, and runIndex. sampleIndex selects the model
+     * generation (fresh response), runIndex the judge repeat within it.
      */
-    public function findByPromptMetricModelBenchmarkAndRun($prompt, $metric, $model, $benchmark, int $runIndex): ?Result
+    public function findByPromptMetricModelBenchmarkAndRun($prompt, $metric, $model, $benchmark, int $runIndex, int $sampleIndex = 1): ?Result
     {
         return $this->createQueryBuilder('r')
             ->where('r.prompt = :prompt')
@@ -28,11 +30,13 @@ class ResultRepository extends ServiceEntityRepository
             ->andWhere('r.model = :model')
             ->andWhere('r.benchmark = :benchmark')
             ->andWhere('r.runIndex = :runIndex')
+            ->andWhere('r.sampleIndex = :sampleIndex')
             ->setParameter('prompt', $prompt)
             ->setParameter('metric', $metric)
             ->setParameter('model', $model)
             ->setParameter('benchmark', $benchmark)
             ->setParameter('runIndex', $runIndex)
+            ->setParameter('sampleIndex', $sampleIndex)
             ->getQuery()
             ->getOneOrNullResult();
     }

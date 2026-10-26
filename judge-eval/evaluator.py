@@ -6,11 +6,16 @@ from eval_logger import EvalLogger
 import json
 
 class Evaluator:
-    def __init__(self, prompt: Prompt, metric: Metric, model: ModelInfo, system_prompt: str = ""):
+    def __init__(self, prompt: Prompt, metric: Metric, model: ModelInfo, system_prompt: str = "", sample_index: int = 1):
         self.prompt = prompt
         self.metric = metric
         self.model = model
         self.system_prompt = system_prompt
+        # Model generation ("sample") index. Sample 1 is the shared canonical
+        # response (cache key unchanged); samples >= 2 generate fresh responses
+        # (separate cache keys) so benchmark repeats can also measure model
+        # variance, not only judge variance. run_index never affects the cache.
+        self.sample_index = sample_index if sample_index and sample_index > 0 else 1
 
         # one logger instance per evaluation.
         self.eval_logger = EvalLogger(enable_terminal_output=True, verbose_terminal=True)
@@ -19,7 +24,8 @@ class Evaluator:
             "metric_name": metric.name,
             "metric_type": metric.type,
             "model_name": model.name,
-            "has_system_prompt": bool(system_prompt)
+            "has_system_prompt": bool(system_prompt),
+            "sample_index": self.sample_index
         })
 
     def evaluate(self):
@@ -71,7 +77,7 @@ class Evaluator:
 
         # Generate actual output using the model
         self.eval_logger.info("evaluator", "Requesting LLM response for evaluation")
-        requestor = LlmRequestor(self.prompt, self.model, self.system_prompt, logger=self.eval_logger)
+        requestor = LlmRequestor(self.prompt, self.model, self.system_prompt, logger=self.eval_logger, sample_index=self.sample_index)
         actual_output = requestor.request()
 
         self.eval_logger.info("evaluator", "Creating test case", {

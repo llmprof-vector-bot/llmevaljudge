@@ -57,6 +57,16 @@ class Benchmark
     private int $repeatCount = 1;
 
     /**
+     * Number of independent model generations ("samples") per prompt+model.
+     * Sample 1 is the canonical response shared with all judge repeats; each
+     * additional sample generates a fresh model response (measures model
+     * variance, while repeat_count measures judge variance per sample).
+     */
+    #[ORM\Column(type: Types::INTEGER, options: ['default' => 1])]
+    #[Groups(['api', 'benchmarks'])]
+    private int $sampleCount = 1;
+
+    /**
      * @var Collection<int, Result>
      */
     #[ORM\OneToMany(targetEntity: Result::class, mappedBy: 'benchmark', orphanRemoval: true)]
@@ -223,6 +233,18 @@ class Benchmark
     public function setRepeatCount(int $repeatCount): static
     {
         $this->repeatCount = max(1, $repeatCount);
+
+        return $this;
+    }
+
+    public function getSampleCount(): int
+    {
+        return $this->sampleCount;
+    }
+
+    public function setSampleCount(int $sampleCount): static
+    {
+        $this->sampleCount = max(1, $sampleCount);
 
         return $this;
     }

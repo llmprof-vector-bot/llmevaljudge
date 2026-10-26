@@ -176,8 +176,8 @@
                     </div>
                 </Card>
 
-                <!-- Aggregated view when repeatCount > 1 -->
-                <div v-if="repeatCount > 1">
+                <!-- Aggregated view when repeats and/or samples are configured -->
+                <div v-if="hasVarianceDimensions">
                     <div
                         v-for="group in promptAggregatedResults"
                         :key="group.key"
@@ -198,6 +198,23 @@
                                         {{ Math.round(group.minScore * 100) }}%
                                         &middot; Max:
                                         {{ Math.round(group.maxScore * 100) }}%
+                                        <template
+                                            v-if="sampleCount > 1"
+                                        >&middot; Judge SD:
+                                            {{
+                                                formatScoreSd(group.judgeSd)
+                                            }}
+                                            &middot; Model SD:
+                                            {{
+                                                formatScoreSd(group.modelSd)
+                                            }}</template
+                                        >
+                                        <template v-else>
+                                            &middot; SD:
+                                            {{
+                                                formatScoreSd(group.totalSd)
+                                            }}</template
+                                        >
                                     </small>
                                 </div>
                                 <div class="text-end">
@@ -242,6 +259,14 @@
                                         class="d-flex justify-content-between align-items-center mb-2"
                                     >
                                         <strong
+                                            v-if="sampleCount > 1"
+                                            >Sample
+                                            {{ result.sampleIndex || 1 }}
+                                            &middot; Run
+                                            {{ result.runIndex || 1 }}</strong
+                                        >
+                                        <strong
+                                            v-else
                                             >Run
                                             {{ result.runIndex || 1 }}</strong
                                         >
@@ -427,9 +452,9 @@
             <div v-else-if="!selectedPrompt && filteredResults.length > 0">
                 <h5 class="mb-3">All Results</h5>
 
-                <!-- Aggregated table view for repeated evaluations -->
+                <!-- Aggregated table view for repeated evaluation runs -->
                 <div
-                    v-if="repeatCount > 1 && aggregatedResults"
+                    v-if="hasVarianceDimensions && aggregatedResults"
                     class="table-responsive"
                 >
                     <table class="table table-striped">
@@ -442,6 +467,7 @@
                                 <th>Avg Score</th>
                                 <th>Runs</th>
                                 <th>Min / Max</th>
+                                <th>Variance</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -485,6 +511,25 @@
                                             Math.round(group.maxScore * 100)
                                         }}%</small
                                     >
+                                </td>
+                                <td>
+                                    <small>
+                                        <template v-if="sampleCount > 1">
+                                            Judge
+                                            ±{{
+                                                formatScoreSd(group.judgeSd)
+                                            }}<br />
+                                            Model
+                                            ±{{
+                                                formatScoreSd(group.modelSd)
+                                            }}
+                                        </template>
+                                        <template v-else>
+                                            ±{{
+                                                formatScoreSd(group.totalSd)
+                                            }}
+                                        </template>
+                                    </small>
                                 </td>
                                 <td>
                                     <Button
@@ -767,7 +812,7 @@ export default {
         },
 
         promptAggregatedResults() {
-            if (!this.selectedPrompt || this.repeatCount <= 1) return [];
+            if (!this.selectedPrompt || !this.hasVarianceDimensions) return [];
 
             const groups = {};
             this.promptResults.forEach((result) => {
@@ -791,7 +836,9 @@ export default {
                 const minScore = Math.min(...scores);
                 const maxScore = Math.max(...scores);
                 group.runs.sort(
-                    (a, b) => (a.runIndex || 1) - (b.runIndex || 1),
+                    (a, b) =>
+                        (a.sampleIndex || 1) - (b.sampleIndex || 1) ||
+                        (a.runIndex || 1) - (b.runIndex || 1),
                 );
                 return {
                     ...group,
@@ -799,6 +846,7 @@ export default {
                     minScore,
                     maxScore,
                     runCount: group.runs.length,
+                    ...this.decomposeVariance(group.runs),
                 };
             });
         },
@@ -816,9 +864,18 @@ export default {
             return this.benchmark.repeatCount || 1;
         },
 
+        sampleCount() {
+            return this.benchmark.sampleCount || 1;
+        },
+
+        // Any configured variance dimension: judge repeats and/or model samples
+        hasVarianceDimensions() {
+            return this.repeatCount > 1 || this.sampleCount > 1;
+        },
+
         // Group results by (prompt, metric, model) and compute averages
         aggregatedResults() {
-            if (this.repeatCount <= 1) return null;
+            if (!this.hasVarianceDimensions) return null;
 
             const groups = {};
             this.filteredResults.forEach((result) => {
@@ -847,6 +904,7 @@ export default {
                     minScore,
                     maxScore,
                     runCount: group.runs.length,
+                    ...this.decomposeVariance(group.runs),
                 };
             });
         },
@@ -877,7 +935,7 @@ export default {
         },
 
         totalPages() {
-            if (this.repeatCount > 1 && this.aggregatedResults) {
+            if (this.hasVarianceDimensions && this.aggregatedResults) {
                 return Math.ceil(
                     this.aggregatedResults.length / this.itemsPerPage,
                 );
@@ -964,6 +1022,69 @@ export default {
             if (score >= 80) return "bg-success";
             if (score >= 60) return "bg-warning";
             return "bg-danger";
+        },
+
+        /**
+         * Decompose score variance of a group of runs into the two
+         * independence sources:
+         * - judgeSd: mean of the within-sample SDs (all runs of a sample judge
+         *   the identical cached model response, so their spread is judge
+         *   non-determinism).
+         * - modelSd: SD of the per-sample judge-averaged means, corrected for
+         *   the judge noise leaking into each mean (Var(means) - judgeVar/J).
+         * - totalSd: plain SD over all runs of the group.
+         * All values are in raw 0-1 score units; display uses formatScoreSd.
+         */
+        decomposeVariance(runs) {
+            const varOf = (values) => {
+                if (values.length < 2) return 0;
+                const mean =
+                    values.reduce((a, b) => a + b, 0) / values.length;
+                return (
+                    values.reduce((acc, v) => acc + (v - mean) ** 2, 0) /
+                    (values.length - 1)
+                );
+            };
+
+            const samples = new Map();
+            runs.forEach((r) => {
+                const idx = r.sampleIndex || 1;
+                if (!samples.has(idx)) samples.set(idx, []);
+                samples.get(idx).push(r.score || 0);
+            });
+            const sampleGroups = Array.from(samples.values());
+
+            const withinSampleVars = sampleGroups
+                .filter((s) => s.length >= 2)
+                .map((s) => varOf(s));
+            const judgeVar = withinSampleVars.length
+                ? withinSampleVars.reduce((a, b) => a + b, 0) /
+                  withinSampleVars.length
+                : 0;
+
+            let modelVar = 0;
+            if (sampleGroups.length >= 2) {
+                const sampleMeans = sampleGroups.map(
+                    (s) => s.reduce((a, b) => a + b, 0) / s.length,
+                );
+                const avgRunsPerSample =
+                    sampleGroups.reduce((a, s) => a + s.length, 0) /
+                    sampleGroups.length;
+                modelVar = Math.max(
+                    0,
+                    varOf(sampleMeans) - judgeVar / avgRunsPerSample,
+                );
+            }
+
+            return {
+                judgeSd: Math.sqrt(judgeVar),
+                modelSd: Math.sqrt(modelVar),
+                totalSd: Math.sqrt(varOf(runs.map((r) => r.score || 0))),
+            };
+        },
+
+        formatScoreSd(sd) {
+            return Math.round((sd || 0) * 100) + "%";
         },
 
         toggleLogs(resultId) {

@@ -794,29 +794,35 @@
                                 test cases × metrics. Start with smaller benchmarks to test your setup.
                             </div>
 
-                            <h5 class="text-primary mb-3 mt-4">Understanding Repeat Evaluations</h5>
+                            <h5 class="text-primary mb-3 mt-4">Understanding Repeats and Samples</h5>
 
-                            <p>Benchmarks support <strong>multiple independent evaluation runs</strong> against the same
-                                prompts to measure evaluation reliability and reduce statistical noise.</p>
+                            <p>Benchmarks support two independent variance dimensions against the same
+                                prompts — <strong>model samples</strong> (fresh model generations, measuring model
+                                variance) and <strong>evaluation repeats</strong> (fresh judge runs per sample,
+                                measuring judge variance) — to measure evaluation reliability and reduce
+                                statistical noise.</p>
 
                             <h6 class="text-primary mb-2">How Repeats Work:</h6>
                             <div class="card border-info mb-3">
                                 <div class="card-body">
                                     <p class="mb-2"><strong>Overview:</strong> Instead of evaluating each (prompt,
-                                        model, metric) combination once, you can run it N times to capture variance in
-                                        the evaluation process.</p>
+                                        model, metric) combination once, you can run it samples × repeats times to
+                                        capture variance in the generation and evaluation process.
+                                        Each sample generates a fresh model response; each repeat re-judges that
+                                        sample's response with a fresh judge call.</p>
 
                                     <div class="row">
                                         <div class="col-md-6">
-                                            <h6 class="text-info mb-2">Model Response (Cached)</h6>
+                                            <h6 class="text-info mb-2">Model Response (One per Sample)</h6>
                                             <ul class="small mb-0">
-                                                <li>The tested model generates <strong>one response per
-                                                        prompt/model</strong></li>
-                                                <li>This response is <strong>cached</strong> for 24 hours</li>
-                                                <li><strong>All repeats</strong> evaluate the <strong>same</strong>
-                                                    model output</li>
-                                                <li>All metrics see <strong>identical</strong> responses (cross-metric
-                                                    fairness)</li>
+                                                <li>Sample 1 generates <strong>one response per
+                                                        prompt/model</strong> (cached for 24 hours)</li>
+                                                <li>Samples 2+ generate <strong>fresh responses</strong> (new cache
+                                                    entries) to capture model variance</li>
+                                                <li><strong>All repeats of a sample</strong> evaluate the
+                                                    <strong>same</strong> model output</li>
+                                                <li>All metrics see <strong>identical</strong> responses per sample
+                                                    (cross-metric fairness)</li>
                                             </ul>
                                         </div>
                                         <div class="col-md-6">
@@ -824,7 +830,8 @@
                                             <ul class="small mb-0">
                                                 <li>The judge LLM evaluates <strong>independently each run</strong></li>
                                                 <li><strong>No caching</strong> — fresh judgment each time</li>
-                                                <li>Scores may vary slightly (judge non-determinism)</li>
+                                                <li>Score spread <strong>within</strong> a sample = judge
+                                                    non-determinism</li>
                                                 <li>Averaged scores are more reliable than single evaluations</li>
                                             </ul>
                                         </div>
@@ -835,10 +842,11 @@
                             <h6 class="text-primary mb-2">What Variance Is Being Measured?</h6>
                             <div class="alert alert-warning">
                                 <i class="ph ph-warning me-2"></i>
-                                <strong>Important:</strong> With repeat evaluations, you measure <strong>judge
-                                    consistency</strong>, not model consistency. Each repeat uses the <strong>same model
-                                    output</strong>, so score variance reflects how reliably your judge evaluates that
-                                output, not how the model varies across runs.
+                                <strong>Important:</strong> With repeat evaluations, the score spread
+                                <strong>within</strong> a sample reflects <strong>judge consistency</strong> (same
+                                model output judged repeatedly). The spread of judged averages
+                                <strong>between</strong> samples reflects <strong>model consistency</strong>
+                                (independent generations). Keep samples at 1 to isolate judge variance only.
                             </div>
 
                             <h6 class="text-primary mb-2">Benefits:</h6>
@@ -855,10 +863,11 @@
 
                             <h6 class="text-primary mb-2">Configuration Example:</h6>
                             <p class="small text-muted mb-3"><strong>Benchmark:</strong> 10 prompts × 3 metrics × 2
-                                models × 5 repeats<br>
-                                <strong>API Calls:</strong> (10 × 2 = 20 model calls) + (10 × 3 × 2 × 5 = 300 judge
-                                calls) = 320 total<br>
-                                <strong>Results Stored:</strong> 300 Result rows (one per metric × model × repeat)
+                                models × 3 samples × 5 repeats<br>
+                                <strong>API Calls:</strong> (10 × 2 × 3 = 60 model calls, one per sample) + (10 × 3 × 2
+                                × 3 × 5 = 900 judge calls) = 960 total<br>
+                                <strong>Results Stored:</strong> 900 Result rows (one per metric × model × sample ×
+                                repeat)
                             </p>
 
                             <h6 class="text-primary mb-2">Viewing Repeat Results:</h6>

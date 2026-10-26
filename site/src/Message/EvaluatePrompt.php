@@ -10,6 +10,7 @@ final class EvaluatePrompt
         public int $modelId,
         public int $benchmarkId,
         public int $runIndex = 1,
-        public int $attempt = 1
+        public int $attempt = 1,
+        public int $sampleIndex = 1
     ) {}
 }

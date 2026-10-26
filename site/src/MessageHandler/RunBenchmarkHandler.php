@@ -60,9 +60,11 @@ final class RunBenchmarkHandler
         // collect requests that can be run
         $requests = [];
         $repeatCount = $benchmark->getRepeatCount();
+        $sampleCount = $benchmark->getSampleCount();
 
         try {
-            // Execute benchmark: foreach metric, foreach of its test cases, foreach prompt, foreach model, foreach run.
+            // Execute benchmark: foreach metric, foreach of its test cases, foreach prompt, foreach model, foreach sample, foreach run.
+            // Sample = fresh model generation (model variance); run = judge repeat of that sample (judge variance).
             // Pairing metric<->test case: explicit assignment wins, empty assignment means "all test cases"
             // (MetricTestCaseResolver::getEffectiveTestCasesForMetric). EvaluatePromptHandler
             // ::getTotalExpectedResults derives its progress total from the same resolver.
@@ -88,24 +90,30 @@ final class RunBenchmarkHandler
                         }
 
                         foreach ($benchmark->getModels() as $model) {
-                            for ($runIndex = 1; $runIndex <= $repeatCount; $runIndex++) {
-                                // If only missing mode, check if result already exists for this benchmark + runIndex
-                                if ($message->onlyMissing) {
-                                    $existingResult = $this->entityManager->getRepository(Result::class)
-                                        ->findByPromptMetricModelBenchmarkAndRun($prompt, $metric, $model, $benchmark, $runIndex);
+                            // Each sample generates a fresh model response (model
+                            // variance); each runIndex re-judges that sample's
+                            // cached response with a fresh judge call (judge variance).
+                            for ($sampleIndex = 1; $sampleIndex <= $sampleCount; $sampleIndex++) {
+                                for ($runIndex = 1; $runIndex <= $repeatCount; $runIndex++) {
+                                    // If only missing mode, check if result already exists for this benchmark + sampleIndex + runIndex
+                                    if ($message->onlyMissing) {
+                                        $existingResult = $this->entityManager->getRepository(Result::class)
+                                            ->findByPromptMetricModelBenchmarkAndRun($prompt, $metric, $model, $benchmark, $runIndex, $sampleIndex);
 
-                                    if ($existingResult) {
-                                        continue; // Skip this combination as it already has a result
+                                        if ($existingResult) {
+                                            continue; // Skip this combination as it already has a result
+                                        }
                                     }
-                                }
 
-                                // Collect requests for this model and run
-                                $requests[] = [
-                                    'prompt' => $prompt,
-                                    'metric' => $metric,
-                                    'model' => $model,
-                                    'runIndex' => $runIndex
-                                ];
+                                    // Collect requests for this model, sample and run
+                                    $requests[] = [
+                                        'prompt' => $prompt,
+                                        'metric' => $metric,
+                                        'model' => $model,
+                                        'sampleIndex' => $sampleIndex,
+                                        'runIndex' => $runIndex
+                                    ];
+                                }
                             }
                         }
                     }
@@ -141,11 +149,12 @@ final class RunBenchmarkHandler
         // Dispatch all collected requests for parallel processing
         foreach ($requests as $request) {
             $evaluateMessage = new EvaluatePrompt(
-                $request['prompt']->getId(),
-                $request['metric']->getId(),
-                $request['model']->getId(),
-                $benchmark->getId(),
-                $request['runIndex']
+                promptId: $request['prompt']->getId(),
+                metricId: $request['metric']->getId(),
+                modelId: $request['model']->getId(),
+                benchmarkId: $benchmark->getId(),
+                runIndex: $request['runIndex'],
+                sampleIndex: $request['sampleIndex']
             );
             $this->messageBus->dispatch($evaluateMessage);
         }

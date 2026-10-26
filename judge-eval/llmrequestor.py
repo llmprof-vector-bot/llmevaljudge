@@ -9,10 +9,14 @@ from datetime import datetime, timedelta
 from eval_logger import eval_logger
 
 class LlmRequestor:
-    def __init__(self, prompt: Prompt, model: ModelInfo, system_prompt: str = "", logger=None):
+    def __init__(self, prompt: Prompt, model: ModelInfo, system_prompt: str = "", logger=None, sample_index: int = 1):
         self.prompt = prompt
         self.model = model
         self.system_prompt = system_prompt
+        # Model generation ("sample") index: >= 2 gets its own cache entry, so
+        # benchmark repeats can generate fresh responses. Default 1 shares the
+        # canonical response across all judge repeats and metrics.
+        self.sample_index = sample_index if sample_index and sample_index > 0 else 1
         self.eval_logger = logger if logger is not None else eval_logger
         
         # Get cache directory relative to the project root
@@ -31,7 +35,13 @@ class LlmRequestor:
         })
 
     def _generate_cache_key(self):
-        """Generate a unique cache key based on prompt, model, and system prompt (run_index excluded so repeated runs share the same model response)"""
+        """Generate a unique cache key based on prompt, model, and system prompt.
+
+        run_index is always excluded so repeated judge runs of the same sample
+        share the same model response. sample_index is excluded when 1 (the
+        canonical sample reuses the historical cache key) and included for
+        samples >= 2, so each additional sample generates a fresh response.
+        """
         cache_data = {
             "prompt_input": self.prompt.input,
             "model_name": self.model.name,
@@ -39,6 +49,8 @@ class LlmRequestor:
             "system_prompt": self.system_prompt,
             "reasoning_effort": self.model.reasoning_effort
         }
+        if self.sample_index > 1:
+            cache_data["sample_index"] = self.sample_index
         cache_string = json.dumps(cache_data, sort_keys=True)
         return hashlib.md5(cache_string.encode()).hexdigest()
 

@@ -56,6 +56,15 @@ class Result
     #[Groups(['api', 'results'])]
     private int $runIndex = 1;
 
+    /**
+     * Which model generation ("sample") this result judged. Results with the
+     * same sample share the identical cached model response; run_index counts
+     * the judge repeats within that sample.
+     */
+    #[ORM\Column(type: Types::INTEGER, options: ['default' => 1])]
+    #[Groups(['api', 'results'])]
+    private int $sampleIndex = 1;
+
     public function getId(): ?int
     {
         return $this->id;
@@ -165,6 +174,18 @@ class Result
     public function setRunIndex(int $runIndex): static
     {
         $this->runIndex = $runIndex;
+
+        return $this;
+    }
+
+    public function getSampleIndex(): int
+    {
+        return $this->sampleIndex;
+    }
+
+    public function setSampleIndex(int $sampleIndex): static
+    {
+        $this->sampleIndex = $sampleIndex;
 
         return $this;
     }

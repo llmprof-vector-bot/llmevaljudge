@@ -64,23 +64,52 @@
                         </div>
                     </div>
                     <div class="col-12">
-                        <div class="mb-3">
-                            <label for="repeatCount" class="form-label"
-                                >Evaluation Repeats</label
-                            >
-                            <input
-                                id="repeatCount"
-                                v-model.number="formData.repeatCount"
-                                type="number"
-                                class="form-control"
-                                min="1"
-                                max="20"
-                                placeholder="1"
-                            />
-                            <div class="form-text">
-                                Number of independent judgements per
-                                combination. Higher values yield more consistent
-                                results through averaging. Default: 1
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="sampleCount" class="form-label"
+                                        >Model Samples</label
+                                    >
+                                    <input
+                                        id="sampleCount"
+                                        v-model.number="formData.sampleCount"
+                                        type="number"
+                                        class="form-control"
+                                        min="1"
+                                        max="20"
+                                        placeholder="1"
+                                    />
+                                    <div class="form-text">
+                                        Number of independent model generations
+                                        per combination. Each sample beyond the
+                                        first generates a fresh response
+                                        (measures model variance). All metrics
+                                        evaluate the identical response of a
+                                        sample. Default: 1
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="repeatCount" class="form-label"
+                                        >Evaluation Repeats</label
+                                    >
+                                    <input
+                                        id="repeatCount"
+                                        v-model.number="formData.repeatCount"
+                                        type="number"
+                                        class="form-control"
+                                        min="1"
+                                        max="20"
+                                        placeholder="1"
+                                    />
+                                    <div class="form-text">
+                                        Number of independent judgements per
+                                        model sample. Higher values yield more
+                                        consistent results through averaging
+                                        (measures judge variance). Default: 1
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -292,7 +321,13 @@
                         <Card class="bg-light">
                             <h6 class="mb-2">Benchmark Estimate</h6>
                             <div class="d-flex justify-content-between mb-1">
-                                <span>Evaluation Repeats:</span>
+                                <span>Model Samples:</span>
+                                <span class="fw-bold"
+                                    >{{ formData.sampleCount || 1 }}×</span
+                                >
+                            </div>
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>Repeats per Sample:</span>
                                 <span class="fw-bold"
                                     >{{ formData.repeatCount || 1 }}×</span
                                 >
@@ -400,6 +435,7 @@ export default {
             ],
             formData: {
                 name: "",
+                sampleCount: 1,
                 repeatCount: 1,
                 modelIds: [],
                 metricIds: [],
@@ -564,6 +600,7 @@ export default {
          * of RunBenchmarkHandler / EvaluatePromptHandler.
          */
         totalEvaluations() {
+            const sampleCount = this.formData.sampleCount || 1;
             const repeatCount = this.formData.repeatCount || 1;
             const modelCount = this.selectedModels.length;
 
@@ -574,7 +611,7 @@ export default {
                 0,
             );
 
-            return totalPairablePrompts * modelCount * repeatCount;
+            return totalPairablePrompts * modelCount * sampleCount * repeatCount;
         },
     },
 
@@ -595,6 +632,7 @@ export default {
 
                 this.formData = {
                     name: this.benchmark.name || "",
+                    sampleCount: this.benchmark.sampleCount || 1,
                     repeatCount: this.benchmark.repeatCount || 1,
                     modelIds: this.benchmark.models?.map((m) => m.id) || [],
                     metricIds: this.benchmark.metrics?.map((m) => m.id) || [],
@@ -735,6 +773,7 @@ export default {
 
                 const data = {
                     name: this.formData.name,
+                    sampleCount: this.formData.sampleCount,
                     repeatCount: this.formData.repeatCount,
                     modelIds: this.formData.modelIds,
                     metricIds: this.formData.metricIds,

@@ -34,7 +34,8 @@ def requestEval(eval_request: EvalRequest):
             prompt=eval_request.prompt,
             metric=eval_request.metric,
             model=eval_request.model,
-            system_prompt=eval_request.system_prompt or ""
+            system_prompt=eval_request.system_prompt or "",
+            sample_index=eval_request.sample_index or 1
         )
         
         eval_logger.info("main", "Starting evaluation")
