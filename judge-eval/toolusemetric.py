@@ -26,6 +26,7 @@ from eval_logger import eval_logger
 
 # Reasons why the tool interaction loop ended
 ROUND_END_MAX_ROUNDS = "max_rounds_reached"
+ROUND_END_FORCED_FINAL = "final_answer_only_after_force"
 ROUND_END_FINAL_ANSWER = "final_answer_no_tool_calls"
 ROUND_END_ERROR = "error"
 
@@ -489,10 +490,43 @@ class ToolUseMetric(BaseMetric):
             while True:
                 round_no += 1
                 if round_no > self.max_tool_rounds:
+                    # Max tool rounds exhausted: give the model ONE more chance to deliver a
+                    # final answer (no tools). The round-limit breach remains a rule violation
+                    # (end_reason marks it); metrics decide how to penalize it.
+                    self.eval_logger.decision("tool_use_metric",
+                        f"Max rounds reached ({self.max_tool_rounds}); requesting forced final answer",
+                        {"rounds_used": round_no - 1})
+                    conversation.append({
+                        "role": "user",
+                        "content": (
+                            "You have reached the maximum number of tool rounds. Do not call any "
+                            "further tools. Give your final answer now in natural language, based "
+                            "on the information you have gathered so far. If information is "
+                            "missing, state clearly what is missing and answer as well as you can."
+                        ),
+                    })
+                    try:
+                        resp = self.evaluatee.chat(self.evaluatee_name, conversation, tools=None)
+                    except Exception as e:
+                        self.end_reason = ROUND_END_MAX_ROUNDS
+                        self.eval_logger.decision("tool_use_metric",
+                            "Forced final-answer request failed; classic abort",
+                            {"error": str(e)[:200]})
+                        break
+                    content = (resp.get("content") or "").strip()
+                    if content and not resp.get("tool_calls"):
+                        self.final_answer = resp["content"]
+                        self.end_reason = ROUND_END_FORCED_FINAL
+                        conversation.append({"role": "assistant", "content": resp["content"]})
+                        self.eval_logger.decision("tool_use_metric",
+                            "Forced final answer received; round-limit breach recorded",
+                            {"answer_length": len(self.final_answer)})
+                        break
+                    # Model still emitted tool calls or empty content: classic abort.
                     self.end_reason = ROUND_END_MAX_ROUNDS
                     self.eval_logger.decision("tool_use_metric",
-                        f"Max rounds reached ({self.max_tool_rounds}); ending tool interaction",
-                        {"rounds_used": round_no - 1})
+                        "Forced final-answer request ignored (tool calls or empty content); abort",
+                        {})
                     break
 
                 self.eval_logger.info("tool_use_metric", f"Round {round_no}: requesting model response",
